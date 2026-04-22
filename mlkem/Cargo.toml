@@ -1,0 +1,7 @@
+[package]
+name = "mlkem"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
