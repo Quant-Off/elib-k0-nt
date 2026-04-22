@@ -1,0 +1,9 @@
+  Result CtEqOps::eq<u64>  (a==a vs a!=a^1)                  |t| =    1.130   (n₀=150000, n₁=150000)   PASS
+  Result CtGreeter::gt<u128>  (a>b vs a<b)                   |t| =    0.953   (n₀=150000, n₁=150000)   PASS
+  Result CtEqOps::eq<i32>  (a==a vs a!=a^1)                  |t| =    0.996   (n₀=150000, n₁=150000)   PASS
+  Result Choice::from_u8  (random vs fixed=0)                |t| =    1.772   (n₀=150000, n₁=150000)   PASS
+  Result CtGreeter::gt<i64>  (a>b vs a<b)                    |t| =    0.663   (n₀=150000, n₁=150000)   PASS
+  Result CtGreeter::gt<u64>  (a>b vs a<b)                    |t| =    0.172   (n₀=150000, n₁=150000)   PASS
+  Result u32::select  (choice=0 vs choice=1)                 |t| =    1.563   (n₀=150000, n₁=150000)   PASS
+  Result CtLess::lt<u32>  (a<b vs a>b)                       |t| =    0.926   (n₀=150000, n₁=150000)   PASS
+  Result u64::select  (choice=0 vs choice=1)                 |t| =    2.114   (n₀=150000, n₁=150000)   PASS

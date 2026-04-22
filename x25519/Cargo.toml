@@ -1,0 +1,8 @@
+[package]
+name = "x25519"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+constant-time.workspace = true

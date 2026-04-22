@@ -1,0 +1,8 @@
+[package]
+name = "rng"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+sha2.workspace = true

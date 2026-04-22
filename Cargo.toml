@@ -1,0 +1,29 @@
+[workspace]
+members = ["blake", "constant-time", "rng", "ed25519", "ed448", "sha2", "sha3", "x25519", "x448", "aes", "chacha20"]
+resolver = "3"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+authors = ["Q. T. Felix <qtfelix@qu4nt.space>"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true # Link Time Optimization을 통한 바이너리 최소화
+opt-level = "z" # 크기 최적화
+
+[workspace.dependencies]
+constant-time = { path = "constant-time", version = "1.0.0" }
+sha2 = { path = "sha2", version = "1.0.0" }
+sha3 = { path = "sha3", version = "1.0.0" }
+blake = { path = "blake", version = "1.0.0" }
+rng = { path = "rng", version = "1.0.0" }
+ed25519 = { path = "ed25519", version = "1.0.0" }
+ed448 = { path = "ed448", version = "1.0.0" }
+x25519 = { path = "x25519", version = "1.0.0" }
+x448 = { path = "x448", version = "1.0.0" }
+aes = { path = "aes", version = "1.0.0" }
+chacha20 = { path = "chacha20", version = "1.0.0" }

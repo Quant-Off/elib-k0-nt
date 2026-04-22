@@ -1,0 +1,7 @@
+[package]
+name = "constant-time"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
