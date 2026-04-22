@@ -11,7 +11,7 @@
 //!
 //! # Examples
 //! ```rust,ignore
-//! use zeorize::Secret;
+//! use zeroize::Secret;
 //!
 //! fn process_key() {
 //!     let key = Secret::new([0u8; 32]);

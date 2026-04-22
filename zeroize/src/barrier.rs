@@ -11,7 +11,7 @@
 //!
 //! # Examples
 //! ```rust,ignore
-//! use zeorize::barrier::{compiler_barrier, memory_barrier};
+//! use zeroize::barrier::{compiler_barrier, memory_barrier};
 //!
 //! compiler_barrier();
 //! // 민감한 메모리 연산
