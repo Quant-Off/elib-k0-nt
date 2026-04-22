@@ -1,5 +1,5 @@
 [package]
-name = "zeorize"
+name = "zeroize"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

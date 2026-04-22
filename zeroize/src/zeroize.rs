@@ -11,7 +11,7 @@
 //!
 //! # Examples
 //! ```rust,ignore
-//! use zeorize::Zeroize;
+//! use zeroize::Zeroize;
 //!
 //! let mut key: [u8; 32] = [0xAB; 32];
 //! key.zeroize();

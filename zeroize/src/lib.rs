@@ -11,7 +11,7 @@
 //!
 //! # Examples
 //! ```rust,ignore
-//! use zeorize::{Secret, Zeroize};
+//! use zeroize::{Secret, Zeroize};
 //!
 //! // Secret으로 민감 데이터 보호
 //! {
