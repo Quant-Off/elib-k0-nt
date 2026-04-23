@@ -10,6 +10,7 @@ use crate::poly::{Poly, PolyVec};
 use crate::sample::{expand_a, expand_mask, sample_in_ball};
 use crate::{D, Q};
 use sha3::{SHAKE256, XOF};
+use zeroize::Secret;
 
 fn inf_norm_vec<const DIM: usize>(v: &PolyVec<DIM>) -> i32 {
     let mut max = 0i32;
@@ -253,15 +254,15 @@ pub fn sign_internal<
     let mut shake_mu = SHAKE256::new();
     shake_mu.update(&sk.tr);
     shake_mu.update(m_prime);
-    let mut mu = [0u8; 64];
-    shake_mu.finalize_into(&mut mu);
+    let mut mu = Secret::new([0u8; 64]);
+    shake_mu.finalize_into(mu.expose_mut());
 
     let mut shake_rho_pp = SHAKE256::new();
     shake_rho_pp.update(&sk.k_seed);
     shake_rho_pp.update(rnd);
-    shake_rho_pp.update(&mu);
-    let mut rho_pp = [0u8; 64];
-    shake_rho_pp.finalize_into(&mut rho_pp);
+    shake_rho_pp.update(mu.expose());
+    let mut rho_pp = Secret::new([0u8; 64]);
+    shake_rho_pp.finalize_into(rho_pp.expose_mut());
 
     let mut kappa: u16 = 0;
     const MAX_ITER: usize = 1000;
@@ -270,7 +271,7 @@ pub fn sign_internal<
     let w1_len = w1_bytes_len::<K>(GAMMA2);
 
     for _ in 0..MAX_ITER {
-        let y = expand_mask::<L>(&rho_pp, kappa, GAMMA1)?;
+        let y = expand_mask::<L>(rho_pp.expose(), kappa, GAMMA1)?;
 
         let mut y_hat = y;
         y_hat.ntt();
@@ -283,7 +284,7 @@ pub fn sign_internal<
         w1_encode::<K>(&w1, GAMMA2, &mut w1_bytes[..w1_len]);
 
         let mut shake_c = SHAKE256::new();
-        shake_c.update(&mu);
+        shake_c.update(mu.expose());
         shake_c.update(&w1_bytes[..w1_len]);
         let mut c_tilde_buf = [0u8; 64];
         shake_c.finalize_into(&mut c_tilde_buf[..c_tilde_len]);

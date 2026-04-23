@@ -10,6 +10,7 @@ use crate::poly::PolyVec;
 use crate::sample::{expand_a, expand_s};
 use constant_time::{Choice, CtSelOps};
 use sha3::{SHAKE256, XOF};
+use zeroize::Secret;
 
 pub struct PublicKey<const K: usize> {
     pub rho: [u8; 32],
@@ -20,9 +21,9 @@ pub struct PrivateKey<const K: usize, const L: usize> {
     pub rho: [u8; 32],
     pub k_seed: [u8; 32],
     pub tr: [u8; 64],
-    pub s1: PolyVec<L>,
-    pub s2: PolyVec<K>,
-    pub t0: PolyVec<K>,
+    pub s1: Secret<PolyVec<L>>,
+    pub s2: Secret<PolyVec<K>>,
+    pub t0: Secret<PolyVec<K>>,
 }
 
 #[inline(always)]
@@ -72,15 +73,17 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     k_seed.copy_from_slice(&expanded[96..128]);
 
     let a_hat = expand_a::<K, L>(&rho)?;
-    let (mut s1, s2) = expand_s::<K, L, ETA>(&rho_prime)?;
+    let (mut s1, s2pv) = expand_s::<K, L, ETA>(&rho_prime)?;
+    let s2 = Secret::new(s2pv);
 
-    let s1_original = s1;
+    let s1_original = Secret::new(s1);
     s1.ntt();
     let mut t = a_hat.multiply_vector(&s1);
     t.intt();
     t = t.add(&s2);
 
-    let (t1, t0) = power2round_vec(&t);
+    let (t1, t0pv) = power2round_vec(&t);
+    let t0 = Secret::new(t0pv);
 
     let mut shake_tr = SHAKE256::new();
     shake_tr.update(&rho);
@@ -179,13 +182,15 @@ pub fn sk_decode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: u
     tr.copy_from_slice(&sk_bytes[off..off + 64]);
     off += 64;
 
-    let s1: PolyVec<L> = polyvec_bit_unpack_eta(&sk_bytes[off..off + s1_len], ETA);
+    let s1: Secret<PolyVec<L>> =
+        Secret::new(polyvec_bit_unpack_eta(&sk_bytes[off..off + s1_len], ETA));
     off += s1_len;
 
-    let s2: PolyVec<K> = polyvec_bit_unpack_eta(&sk_bytes[off..off + s2_len], ETA);
+    let s2: Secret<PolyVec<K>> =
+        Secret::new(polyvec_bit_unpack_eta(&sk_bytes[off..off + s2_len], ETA));
     off += s2_len;
 
-    let t0: PolyVec<K> = polyvec_bit_unpack_t0(&sk_bytes[off..off + t0_len]);
+    let t0: Secret<PolyVec<K>> = Secret::new(polyvec_bit_unpack_t0(&sk_bytes[off..off + t0_len]));
 
     PrivateKey {
         rho,
