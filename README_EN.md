@@ -11,15 +11,11 @@ Targeting the NT of the `entlib-native` crypto module, it is written 100% in Rus
 > [!IMPORTANT]
 > This project does not create complex formal documentation (or technical specifications) for each cryptographic function like in `entlib-native`. Instead, the API signatures and usage of the functions are primarily described in Rust documentation comments, and a summary of this will be posted as a `README.md` in the module (or crate) where the functionality is provided.
 
-# Release Implementation and Goals
+You can always refer to the [INTRODUCTION_EN.md](INTRODUCTION_EN.md) file for a detailed project introduction!
 
-This includes an implementation that brings back the lifecycle control of `SecureBuffer`, a single bottleneck management structure that was a mainstay in the Entanglement Library. During the initial version, I tried to include individual functions in a single module, but I found it easier to manage them on a crate-by-crate basis, so I chose a virtual manifest structure for the root.
+# `1.0.0` Release
 
-The implementation goals for this release `1.0.0` are as follows:
-
-- Post-Quantum Cryptography(ML-DSA, ML-KEM)
-
-The following features are currently implemented:
+The following features are implemented in this release:
 
 - [Constant-time Ops](./constant-time)
 - Hash([SHA2](./sha2), [SHA3](./sha3), [SHAKE](./sha3), [BLAKE2](./blake))
@@ -27,10 +23,9 @@ The following features are currently implemented:
 - Digital Signature([Ed25519](./ed25519), [Ed448](./ed448))
 - Key Establishment Protocol([X25519](./x25519), [X448](./x448))
 - AEAD, BlockCipher([AES](./aes), [ChaCha20-Poly1305](./chacha20))
+- Post-Quantum Cryptography([ML-DSA](./mldsa), [ML-KEM](./mlkem))
 
-Once all the above features are implemented, I plan to focus on clearly documenting the usage of each feature through `README.md` files in their respective crates.
-
-In this release, the primary goal is to implement the cryptographic functions and verify their correct operation through testing. Detailed implementation and testing regarding normal interaction with the kernel will be released in the next alpha version.
+The primary goal of this release was to implement cryptographic functions and verify their operation through testing. Detailed implementation and testing regarding interaction with the kernel will be released in the next alpha version.
 
 # 라이선스
 
