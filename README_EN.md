@@ -4,7 +4,7 @@
 
 The [Rust-based Entanglement Library native project](https.github.com/Quant-Off/entlib-native) supports `std` (and `no_std`) for the most widely used architectures and focuses on complying with high-security standards (such as international regulations). This module is reasonable in that regard.
 
-This module runs as a daemon in the Ring 3 user space on an Isolation Lightweight Microkernel (ISO-Light-K0) and communicates for encryption via TUI and IPC messages. The daemon operates by sending data to an IPC endpoint router in the Ring 0 kernel space.
+This module runs as a daemon in the Ring 3 user space on an Isolation Lightweight Microkernel K0 (ISO-LIGHT-K0) and communicates for encryption via TUI and IPC messages. The daemon operates by sending data to an IPC endpoint router in the Ring 0 kernel space.
 
 Targeting the NT of the `entlib-native` crypto module, it is written 100% in Rust, and despite being lightweight, it still offers strong security.
 
