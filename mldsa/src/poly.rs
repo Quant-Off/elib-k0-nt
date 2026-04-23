@@ -1,9 +1,17 @@
 use crate::field::Fq;
 use crate::ntt::{N, intt, ntt};
+use zeroize::Zeroize;
 
 #[derive(Clone, Copy)]
 pub struct Poly {
     pub coeffs: [Fq; N],
+}
+
+impl Zeroize for Poly {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        self.coeffs.zeroize();
+    }
 }
 
 impl Poly {
@@ -52,6 +60,15 @@ pub struct PolyVec<const D: usize> {
     pub vec: [Poly; D],
 }
 
+impl<const D: usize> Zeroize for PolyVec<D> {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        for poly in self.vec.iter_mut() {
+            poly.zeroize();
+        }
+    }
+}
+
 impl<const D: usize> PolyVec<D> {
     pub const fn new_zero() -> Self {
         Self {
@@ -91,6 +108,17 @@ impl<const D: usize> PolyVec<D> {
 #[derive(Clone, Copy)]
 pub struct PolyMatrix<const K: usize, const L: usize> {
     pub rows: [[Poly; L]; K],
+}
+
+impl<const K: usize, const L: usize> Zeroize for PolyMatrix<K, L> {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        for row in self.rows.iter_mut() {
+            for poly in row.iter_mut() {
+                poly.zeroize();
+            }
+        }
+    }
 }
 
 impl<const K: usize, const L: usize> PolyMatrix<K, L> {

@@ -1,8 +1,16 @@
 use crate::{Q, Q_INV};
 use constant_time::{Choice, CtGreeter, CtSelOps};
+use zeroize::Zeroize;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fq(pub i32);
+
+impl Zeroize for Fq {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl Fq {
     #[inline(always)]
