@@ -1,7 +1,8 @@
 use crate::{Digest, KeccakState, MAX_RATE_BYTES};
 use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
-use core::ptr::write_volatile;
 use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::Secret;
+use zeroize::volatile::volatile_write;
 
 // Keccak-f[1600] 상수
 const KECCAK_ROUND_CONSTANTS: [u64; 24] = [
@@ -44,8 +45,8 @@ const PI_INDICES: [usize; 25] = [
 impl KeccakState {
     pub(crate) fn new(rate_bits: usize, domain: u8) -> Self {
         Self {
-            state: [0u64; 25],
-            buffer: [0u8; MAX_RATE_BYTES],
+            state: Secret::new([0u64; 25]),
+            buffer: Secret::new([0u8; MAX_RATE_BYTES]),
             buffer_len: 0,
             rate_bytes: rate_bits / 8,
             domain,
@@ -91,7 +92,7 @@ impl KeccakState {
         // 스택에서 중간 상태 지우기
         for item in &mut tmp {
             unsafe {
-                write_volatile(item, 0);
+                volatile_write(item, 0);
             }
         }
         compiler_fence(Ordering::SeqCst);
@@ -140,22 +141,36 @@ impl KeccakState {
             i += chunk_len;
 
             if self.buffer_len == self.rate_bytes {
-                // 빌림 충돌을 피하기 위해 버퍼를 스택에 복사한 다음 흡수
-                let mut block = self.buffer;
+                // 역참조 복사
+                let block = Secret::new(*self.buffer.expose());
                 self.absorb_block(&block[..self.rate_bytes]);
-                for b in &mut block {
+                // block 스코프 종료 -> 소거
+                for b in self.buffer.expose_mut().iter_mut() {
                     unsafe {
-                        write_volatile(b, 0);
-                    }
-                }
-                for b in &mut self.buffer {
-                    unsafe {
-                        write_volatile(b, 0);
+                        volatile_write(b as *mut u8, 0u8);
                     }
                 }
                 compiler_fence(Ordering::SeqCst);
                 self.buffer_len = 0;
             }
+
+            // if self.buffer_len == self.rate_bytes {
+            //     // 빌림 충돌을 피하기 위해 버퍼를 스택에 복사한 다음 흡수
+            //     let mut block = self.buffer;
+            //     self.absorb_block(&block[..self.rate_bytes]);
+            //     for b in &mut block {
+            //         unsafe {
+            //             volatile_write(b, 0);
+            //         }
+            //     }
+            //     for b in &mut self.buffer {
+            //         unsafe {
+            //             volatile_write(b, 0);
+            //         }
+            //     }
+            //     compiler_fence(Ordering::SeqCst);
+            //     self.buffer_len = 0;
+            // }
         }
     }
 
@@ -183,7 +198,7 @@ impl KeccakState {
         self.absorb_block(&block[..rate]);
         for b in &mut block {
             unsafe {
-                write_volatile(b, 0);
+                volatile_write(b, 0);
             }
         }
         compiler_fence(Ordering::SeqCst);

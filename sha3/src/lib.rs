@@ -1,11 +1,12 @@
 #![no_std]
 #![allow(non_camel_case_types)]
 
+mod _sha3_test;
 mod keccak;
 
-use core::ptr::write_volatile;
 use core::sync::atomic::{Ordering, compiler_fence};
-
+use zeroize::volatile::volatile_write;
+use zeroize::{Secret, Zeroize};
 //
 // Traits
 //
@@ -43,7 +44,7 @@ impl Drop for Digest {
     fn drop(&mut self) {
         for b in &mut self.bytes {
             unsafe {
-                write_volatile(b, 0);
+                volatile_write(b, 0);
             }
         }
         compiler_fence(Ordering::SeqCst);
@@ -59,23 +60,31 @@ impl Drop for Digest {
 pub(crate) const MAX_RATE_BYTES: usize = 168;
 
 pub(crate) struct KeccakState {
-    pub(crate) state: [u64; 25],
-    pub(crate) buffer: [u8; MAX_RATE_BYTES],
+    pub(crate) state: Secret<[u64; 25]>,
+    pub(crate) buffer: Secret<[u8; MAX_RATE_BYTES]>,
     pub(crate) buffer_len: usize,
     pub(crate) rate_bytes: usize,
     pub(crate) domain: u8,
 }
 
+impl Zeroize for KeccakState {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        self.state.zeroize();
+        self.buffer.zeroize();
+    }
+}
+
 impl Drop for KeccakState {
     fn drop(&mut self) {
-        for s in &mut self.state {
+        for s in self.state.expose_mut() {
             unsafe {
-                write_volatile(s, 0);
+                volatile_write(s, 0);
             }
         }
-        for b in &mut self.buffer {
+        for b in self.buffer.expose_mut() {
             unsafe {
-                write_volatile(b, 0);
+                volatile_write(b, 0);
             }
         }
         compiler_fence(Ordering::SeqCst);
