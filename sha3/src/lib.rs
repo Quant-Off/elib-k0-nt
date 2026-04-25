@@ -4,8 +4,6 @@
 mod _sha3_test;
 mod keccak;
 
-use core::sync::atomic::{Ordering, compiler_fence};
-use zeroize::volatile::volatile_write;
 use zeroize::{Secret, Zeroize};
 //
 // Traits
@@ -40,14 +38,10 @@ impl Digest {
     }
 }
 
-impl Drop for Digest {
-    fn drop(&mut self) {
-        for b in self.bytes.expose_mut() {
-            unsafe {
-                volatile_write(b, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for Digest {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        self.bytes.zeroize();
     }
 }
 
@@ -72,22 +66,6 @@ impl Zeroize for KeccakState {
     fn zeroize(&mut self) {
         self.state.zeroize();
         self.buffer.zeroize();
-    }
-}
-
-impl Drop for KeccakState {
-    fn drop(&mut self) {
-        for s in self.state.expose_mut() {
-            unsafe {
-                volatile_write(s, 0);
-            }
-        }
-        for b in self.buffer.expose_mut() {
-            unsafe {
-                volatile_write(b, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
     }
 }
 
