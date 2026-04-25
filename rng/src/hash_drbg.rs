@@ -275,6 +275,38 @@ macro_rules! impl_hash_drbg {
                 Self::instantiate(entropy.as_slice(), nonce.as_slice(), personalization_string)
             }
 
+            /// 호출자가 수집한 하드웨어 엔트로피로 DRBG를 초기화합니다.
+            ///
+            /// OS 엔트로피 소스가 없는 bare-metal / no_std 환경(커널 부트, TEE 등)에서
+            /// RDSEED / RDRAND / TRNG 등으로 직접 수집한 엔트로피를 주입할 때 사용합니다.
+            ///
+            /// # Arguments
+            /// - `entropy_input`: `security_strength` 이상의 고엔트로피 시드
+            /// - `nonce`: `security_strength / 2` 이상 (엔트로피와 **독립** 수집 필수)
+            /// - `personalization_string`: 호스트 고유 식별자 / 부트 ID 등 (선택)
+            ///
+            /// # Safety
+            /// 호출자는 다음을 보장해야 합니다:
+            /// - `entropy_input` 및 `nonce` 는 암호학적으로 강한 엔트로피 소스에서
+            ///   수집된 값이어야 합니다 (예: x86 RDSEED · RDRAND, ARM RNDR/RNDRRS, TPM).
+            /// - 두 입력은 **독립된 호출** 로 수집되어야 하며, 시간/카운터 등
+            ///   예측 가능한 값을 그대로 사용해서는 안 됩니다.
+            /// - 동일 `entropy_input` / `nonce` 조합을 재사용하면 DRBG 상태가 결정적이
+            ///   되어 출력이 재생(replay)될 수 있습니다.
+            ///
+            /// # Security Note
+            /// 약한 엔트로피를 주입하면 DRBG 출력이 공격자에게 예측 가능하게 되어
+            /// 상위 계층(키 생성, Capability 토큰, IV)의 보안이 붕괴됩니다.
+            /// 가능한 경우 [`new_from_os`] 를 우선 사용하고, 이 함수는 OS 엔트로피
+            /// 소스를 사용할 수 없는 경우에만 사용하세요.
+            pub unsafe fn new_from_entropy(
+                entropy_input: &[u8],
+                nonce: &[u8],
+                personalization_string: Option<&[u8]>,
+            ) -> Result<Self, DrbgError> {
+                Self::instantiate(entropy_input, nonce, personalization_string)
+            }
+
             /// NIST SP 800-90A Rev. 1, Section 10.1.1.2: Hash_DRBG_Instantiate_algorithm
             ///
             /// 사용자가 엔트로피를 직접 주입하는 내부 초기화 함수입니다.

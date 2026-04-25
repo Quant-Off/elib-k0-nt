@@ -1,7 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-extern crate alloc;
-
 mod hash_drbg;
 pub mod os_entropy;
 
