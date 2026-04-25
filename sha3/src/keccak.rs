@@ -153,24 +153,6 @@ impl KeccakState {
                 compiler_fence(Ordering::SeqCst);
                 self.buffer_len = 0;
             }
-
-            // if self.buffer_len == self.rate_bytes {
-            //     // 빌림 충돌을 피하기 위해 버퍼를 스택에 복사한 다음 흡수
-            //     let mut block = self.buffer;
-            //     self.absorb_block(&block[..self.rate_bytes]);
-            //     for b in &mut block {
-            //         unsafe {
-            //             volatile_write(b, 0);
-            //         }
-            //     }
-            //     for b in &mut self.buffer {
-            //         unsafe {
-            //             volatile_write(b, 0);
-            //         }
-            //     }
-            //     compiler_fence(Ordering::SeqCst);
-            //     self.buffer_len = 0;
-            // }
         }
     }
 
@@ -255,7 +237,7 @@ impl KeccakState {
         self.squeeze_fixed(output_len, &mut bytes);
         // 여기서 `self`가 드롭됨 → KeccakState::Drop이 상태와 버퍼를 0으로 만듦
         Digest {
-            bytes,
+            bytes: Secret::new(bytes),
             len: output_len,
         }
     }
