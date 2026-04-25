@@ -28,7 +28,7 @@ pub trait XOF: Sized {
 //
 
 pub struct Digest {
-    bytes: [u8; 64],
+    bytes: Secret<[u8; 64]>,
     len: usize, // 28 / 32 / 48 / 64
 }
 
@@ -42,7 +42,7 @@ impl Digest {
 
 impl Drop for Digest {
     fn drop(&mut self) {
-        for b in &mut self.bytes {
+        for b in self.bytes.expose_mut() {
             unsafe {
                 volatile_write(b, 0);
             }
