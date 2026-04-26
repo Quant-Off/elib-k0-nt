@@ -1,6 +1,6 @@
 #![allow(clippy::identity_op)]
 
-use core::hint::black_box;
+use zeroize::{Secret, Zeroize};
 
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
@@ -76,45 +76,38 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
         output[i * 4..i * 4 + 4].copy_from_slice(&bytes);
     }
 
-    zeroize_u32_array(&mut state);
-    zeroize_u32_array(&mut working);
+    // 키, 카운터를 포함하는 내부 워크 버퍼 명시적 소거
+    state.zeroize();
+    working.zeroize();
 
     output
 }
 
 pub struct ChaCha20 {
-    key: [u8; 32],
+    key: Secret<[u8; 32]>,
     nonce: [u8; 12],
     counter: u32,
 }
 
 impl ChaCha20 {
     pub fn new(key: &[u8; 32], nonce: &[u8; 12]) -> Self {
-        let mut k = [0u8; 32];
-        k.copy_from_slice(key);
-        let mut n = [0u8; 12];
-        n.copy_from_slice(nonce);
         Self {
-            key: k,
-            nonce: n,
+            key: Secret::new(*key),
+            nonce: *nonce,
             counter: 0,
         }
     }
 
     pub fn new_with_counter(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> Self {
-        let mut k = [0u8; 32];
-        k.copy_from_slice(key);
-        let mut n = [0u8; 12];
-        n.copy_from_slice(nonce);
         Self {
-            key: k,
-            nonce: n,
+            key: Secret::new(*key),
+            nonce: *nonce,
             counter,
         }
     }
 
     pub fn keystream_block(&mut self) -> [u8; 64] {
-        let block = chacha20_block(&self.key, self.counter, &self.nonce);
+        let block = chacha20_block(self.key.expose(), self.counter, &self.nonce);
         self.counter = self.counter.wrapping_add(1);
         block
     }
@@ -130,15 +123,16 @@ impl ChaCha20 {
                 data[offset + i] ^= keystream[i];
             }
 
-            zeroize_u8_array(&mut keystream);
+            keystream.zeroize();
             offset += to_process;
         }
     }
 
     pub fn generate_poly1305_key(&mut self) -> [u8; 32] {
-        let block = chacha20_block(&self.key, 0, &self.nonce);
+        let mut block = chacha20_block(self.key.expose(), 0, &self.nonce);
         let mut poly_key = [0u8; 32];
         poly_key.copy_from_slice(&block[..32]);
+        block.zeroize();
         self.counter = 1;
         poly_key
     }
@@ -146,38 +140,48 @@ impl ChaCha20 {
 
 impl Drop for ChaCha20 {
     fn drop(&mut self) {
-        zeroize_u8_array(&mut self.key);
-        zeroize_u8_array(&mut self.nonce);
-        self.counter = 0;
-        let _ = black_box(&self.key);
-        let _ = black_box(&self.nonce);
-        let _ = black_box(&self.counter);
+        // key 는 Secret::Drop 으로 자동 소거
+        self.nonce.zeroize();
+        self.counter.zeroize();
     }
-}
-
-#[inline(never)]
-pub(crate) fn zeroize_u8_array<const N: usize>(arr: &mut [u8; N]) {
-    for byte in arr.iter_mut() {
-        unsafe {
-            core::ptr::write_volatile(byte, 0);
-        }
-    }
-    let _ = black_box(arr);
-}
-
-#[inline(never)]
-fn zeroize_u32_array<const N: usize>(arr: &mut [u32; N]) {
-    for word in arr.iter_mut() {
-        unsafe {
-            core::ptr::write_volatile(word, 0);
-        }
-    }
-    let _ = black_box(arr);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// ChaCha20 의 key (Secret 래핑), nonce, counter 가 Drop 시 모두 0 으로 소거되는지 검증.
+    #[test]
+    fn test_chacha20_zeroize_on_drop() {
+        let key = [0xA5u8; 32];
+        let nonce = [0x5Au8; 12];
+        let mut storage: MaybeUninit<ChaCha20> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(ChaCha20::new_with_counter(&key, &nonce, 42));
+            let key_ptr = storage.assume_init_ref().key.expose().as_ptr();
+            let nonce_ptr = storage.assume_init_ref().nonce.as_ptr();
+            let ctr_ptr = &raw const (*storage.as_ptr()).counter;
+
+            let pre_key = core::slice::from_raw_parts(key_ptr, 32);
+            let pre_nonce = core::slice::from_raw_parts(nonce_ptr, 12);
+            assert!(pre_key.iter().all(|&b| b == 0xA5), "key 초기 패턴 미반영");
+            assert!(
+                pre_nonce.iter().all(|&b| b == 0x5A),
+                "nonce 초기 패턴 미반영"
+            );
+            assert_eq!(core::ptr::read(ctr_ptr), 42);
+
+            storage.assume_init_drop();
+
+            let post_key = core::slice::from_raw_parts(key_ptr, 32);
+            let post_nonce = core::slice::from_raw_parts(nonce_ptr, 12);
+            assert!(post_key.iter().all(|&b| b == 0), "ChaCha20 key 미소거");
+            assert!(post_nonce.iter().all(|&b| b == 0), "ChaCha20 nonce 미소거");
+            assert_eq!(core::ptr::read(ctr_ptr), 0, "ChaCha20 counter 미소거");
+        }
+    }
 
     #[test]
     fn test_chacha20_block_rfc8439_vector() {
