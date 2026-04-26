@@ -4,10 +4,10 @@
 mod chacha20;
 mod poly1305;
 
-use chacha20::{ChaCha20, zeroize_u8_array};
+use chacha20::ChaCha20;
 use constant_time::{Choice, CtEqOps};
-use core::hint::black_box;
 use poly1305::{Poly1305, poly1305_verify};
+use zeroize::{Secret, Zeroize};
 
 pub use chacha20::ChaCha20 as ChaCha20Core;
 pub use poly1305::Poly1305 as Poly1305Core;
@@ -22,14 +22,14 @@ pub enum Error {
 }
 
 pub struct ChaCha20Poly1305 {
-    key: [u8; 32],
+    key: Secret<[u8; 32]>,
 }
 
 impl ChaCha20Poly1305 {
     pub fn new(key: &[u8; 32]) -> Self {
-        let mut k = [0u8; 32];
-        k.copy_from_slice(key);
-        Self { key: k }
+        Self {
+            key: Secret::new(*key),
+        }
     }
 
     pub fn encrypt(
@@ -44,7 +44,7 @@ impl ChaCha20Poly1305 {
             return Err(Error::BufferTooSmall);
         }
 
-        let mut chacha = ChaCha20::new(&self.key, nonce);
+        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         ciphertext[..plaintext.len()].copy_from_slice(plaintext);
@@ -72,8 +72,8 @@ impl ChaCha20Poly1305 {
         let computed_tag = poly.finalize();
         tag.copy_from_slice(&computed_tag);
 
-        zeroize_u8_array(&mut poly_key);
-        zeroize_u8_array(&mut lengths);
+        poly_key.zeroize();
+        lengths.zeroize();
 
         Ok(())
     }
@@ -90,7 +90,7 @@ impl ChaCha20Poly1305 {
             return Err(Error::BufferTooSmall);
         }
 
-        let mut chacha = ChaCha20::new(&self.key, nonce);
+        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         let mut poly = Poly1305::new(&poly_key);
@@ -115,15 +115,15 @@ impl ChaCha20Poly1305 {
         let computed_tag = poly.finalize();
 
         if !poly1305_verify(&computed_tag, tag) {
-            zeroize_u8_array(&mut poly_key);
+            poly_key.zeroize();
             return Err(Error::AuthenticationFailed);
         }
 
         plaintext[..ciphertext.len()].copy_from_slice(ciphertext);
         chacha.apply_keystream(&mut plaintext[..ciphertext.len()]);
 
-        zeroize_u8_array(&mut poly_key);
-        zeroize_u8_array(&mut lengths);
+        poly_key.zeroize();
+        lengths.zeroize();
 
         Ok(())
     }
@@ -139,7 +139,7 @@ impl ChaCha20Poly1305 {
             return Err(Error::BufferTooSmall);
         }
 
-        let mut chacha = ChaCha20::new(&self.key, nonce);
+        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         chacha.apply_keystream(&mut buffer[..plaintext_len]);
@@ -165,8 +165,8 @@ impl ChaCha20Poly1305 {
 
         let tag = poly.finalize();
 
-        zeroize_u8_array(&mut poly_key);
-        zeroize_u8_array(&mut lengths);
+        poly_key.zeroize();
+        lengths.zeroize();
 
         Ok(tag)
     }
@@ -183,7 +183,7 @@ impl ChaCha20Poly1305 {
             return Err(Error::BufferTooSmall);
         }
 
-        let mut chacha = ChaCha20::new(&self.key, nonce);
+        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         let mut poly = Poly1305::new(&poly_key);
@@ -208,23 +208,16 @@ impl ChaCha20Poly1305 {
         let computed_tag = poly.finalize();
 
         if !poly1305_verify(&computed_tag, tag) {
-            zeroize_u8_array(&mut poly_key);
+            poly_key.zeroize();
             return Err(Error::AuthenticationFailed);
         }
 
         chacha.apply_keystream(&mut buffer[..ciphertext_len]);
 
-        zeroize_u8_array(&mut poly_key);
-        zeroize_u8_array(&mut lengths);
+        poly_key.zeroize();
+        lengths.zeroize();
 
         Ok(())
-    }
-}
-
-impl Drop for ChaCha20Poly1305 {
-    fn drop(&mut self) {
-        zeroize_u8_array(&mut self.key);
-        let _ = black_box(&self.key);
     }
 }
 
@@ -239,6 +232,30 @@ pub fn verify_tag(computed: &[u8; 16], expected: &[u8; 16]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// ChaCha20Poly1305 의 key 는 Secret 으로 보호되어 Drop 시 자동 소거.
+    #[test]
+    fn test_chacha20poly1305_zeroize_on_drop() {
+        let key = [0xCDu8; 32];
+        let mut storage: MaybeUninit<ChaCha20Poly1305> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(ChaCha20Poly1305::new(&key));
+            let key_ptr = storage.assume_init_ref().key.expose().as_ptr();
+
+            let pre = core::slice::from_raw_parts(key_ptr, 32);
+            assert!(pre.iter().all(|&b| b == 0xCD), "key 초기 패턴 미반영");
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(key_ptr, 32);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "ChaCha20Poly1305 key 가 Drop 후 소거되지 않음"
+            );
+        }
+    }
 
     #[test]
     fn test_chacha20_poly1305_rfc8439_vector() {

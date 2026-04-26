@@ -1,6 +1,5 @@
-use crate::chacha20::zeroize_u8_array;
 use constant_time::{Choice, CtEqOps};
-use core::hint::black_box;
+use zeroize::Zeroize;
 
 pub struct Poly1305 {
     r: [u32; 5],
@@ -34,7 +33,7 @@ impl Poly1305 {
         let r3 = ((t2 >> 14) | (t3 << 18)) & 0x03ff_ffff;
         let r4 = (t3 >> 8) & 0x03ff_ffff;
 
-        zeroize_u8_array(&mut clamped);
+        clamped.zeroize();
 
         let pad0 = u32::from_le_bytes([key[16], key[17], key[18], key[19]]);
         let pad1 = u32::from_le_bytes([key[20], key[21], key[22], key[23]]);
@@ -235,11 +234,10 @@ impl Poly1305 {
         tag[8..12].copy_from_slice(&(f2 as u32).to_le_bytes());
         tag[12..16].copy_from_slice(&(f3 as u32).to_le_bytes());
 
-        self.h = [0, 0, 0, 0, 0];
-        self.r = [0, 0, 0, 0, 0];
-        self.pad = [0, 0, 0, 0];
-        self.buffer = [0u8; 16];
-        let _ = black_box(&self);
+        self.h.zeroize();
+        self.r.zeroize();
+        self.pad.zeroize();
+        self.buffer.zeroize();
 
         tag
     }
@@ -247,15 +245,11 @@ impl Poly1305 {
 
 impl Drop for Poly1305 {
     fn drop(&mut self) {
-        self.h = [0, 0, 0, 0, 0];
-        self.r = [0, 0, 0, 0, 0];
-        self.pad = [0, 0, 0, 0];
-        self.buffer = [0u8; 16];
-        self.buffer_len = 0;
-        let _ = black_box(&self.h);
-        let _ = black_box(&self.r);
-        let _ = black_box(&self.pad);
-        let _ = black_box(&self.buffer);
+        self.h.zeroize();
+        self.r.zeroize();
+        self.pad.zeroize();
+        self.buffer.zeroize();
+        self.buffer_len.zeroize();
     }
 }
 
@@ -270,6 +264,44 @@ pub fn poly1305_verify(tag1: &[u8; 16], tag2: &[u8; 16]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// Poly1305 의 r, h, pad, buffer 모두 비밀 데이터.
+    /// Drop 후 모든 필드가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_poly1305_zeroize_on_drop() {
+        let key = [0x77u8; 32];
+        let mut storage: MaybeUninit<Poly1305> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(Poly1305::new(&key));
+            // update 로 h 를 0 이 아닌 값으로 진행시킴
+            (*storage.as_mut_ptr()).update(&[0x33u8; 16]);
+
+            let r_ptr = &raw const (*storage.as_ptr()).r as *const u32;
+            let h_ptr = &raw const (*storage.as_ptr()).h as *const u32;
+            let pad_ptr = &raw const (*storage.as_ptr()).pad as *const u32;
+            let buf_ptr = &raw const (*storage.as_ptr()).buffer as *const u8;
+
+            let pre_r = core::slice::from_raw_parts(r_ptr, 5);
+            let pre_h = core::slice::from_raw_parts(h_ptr, 5);
+            let pre_pad = core::slice::from_raw_parts(pad_ptr, 4);
+            assert!(pre_r.iter().any(|&w| w != 0), "Poly1305 r 가 비어 있음");
+            assert!(pre_h.iter().any(|&w| w != 0), "Poly1305 h 가 비어 있음");
+            assert!(pre_pad.iter().any(|&w| w != 0), "Poly1305 pad 가 비어 있음");
+
+            storage.assume_init_drop();
+
+            let post_r = core::slice::from_raw_parts(r_ptr, 5);
+            let post_h = core::slice::from_raw_parts(h_ptr, 5);
+            let post_pad = core::slice::from_raw_parts(pad_ptr, 4);
+            let post_buf = core::slice::from_raw_parts(buf_ptr, 16);
+            assert!(post_r.iter().all(|&w| w == 0), "Poly1305 r 미소거");
+            assert!(post_h.iter().all(|&w| w == 0), "Poly1305 h 미소거");
+            assert!(post_pad.iter().all(|&w| w == 0), "Poly1305 pad 미소거");
+            assert!(post_buf.iter().all(|&b| b == 0), "Poly1305 buffer 미소거");
+        }
+    }
 
     #[test]
     fn test_poly1305_rfc8439_vector() {
