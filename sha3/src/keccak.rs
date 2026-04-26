@@ -1,8 +1,8 @@
 use crate::{Digest, KeccakState, MAX_RATE_BYTES};
 use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
-use core::sync::atomic::{Ordering, compiler_fence};
-use zeroize::Secret;
+use zeroize::barrier::{atomic_compiler_fence, memory_barrier};
 use zeroize::volatile::volatile_write;
+use zeroize::{Secret, Zeroize};
 
 // Keccak-f[1600] 상수
 const KECCAK_ROUND_CONSTANTS: [u64; 24] = [
@@ -89,13 +89,8 @@ impl KeccakState {
             state[0] ^= rc;
         }
 
-        // 스택에서 중간 상태 지우기
-        for item in &mut tmp {
-            unsafe {
-                volatile_write(item, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+        // 스택 중간 상태 소거
+        tmp.zeroize();
     }
 
     // 흡수
@@ -145,12 +140,6 @@ impl KeccakState {
                 let block = Secret::new(*self.buffer.expose());
                 self.absorb_block(&block[..self.rate_bytes]);
                 // block 스코프 종료 -> 소거
-                for b in self.buffer.expose_mut().iter_mut() {
-                    unsafe {
-                        volatile_write(b as *mut u8, 0u8);
-                    }
-                }
-                compiler_fence(Ordering::SeqCst);
                 self.buffer_len = 0;
             }
         }
@@ -173,17 +162,12 @@ impl KeccakState {
     //   (비트 겹침 없음: 0x06 = 0b0000_0110, 0x1f = 0b0001_1111, 0x80 = 0b1000_0000)
     pub(crate) fn pad(&mut self) {
         let rate = self.rate_bytes;
-        let mut block = [0u8; MAX_RATE_BYTES];
+        let mut block = Secret::new([0u8; MAX_RATE_BYTES]);
         block[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
         block[self.buffer_len] = self.domain;
         block[rate - 1] ^= 0x80;
         self.absorb_block(&block[..rate]);
-        for b in &mut block {
-            unsafe {
-                volatile_write(b, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+        // block 스코프 종료 -> Secret::Drop 으로 소거
         self.buffer_len = 0;
     }
 
@@ -235,16 +219,25 @@ impl KeccakState {
         self.pad();
         let mut bytes = [0u8; 64];
         self.squeeze_fixed(output_len, &mut bytes);
-        // 여기서 `self`가 드롭됨 → KeccakState::Drop이 상태와 버퍼를 0으로 만듦
-        Digest {
+        let digest = Digest {
             bytes: Secret::new(bytes),
             len: output_len,
+        };
+        // Secret::new(bytes)는 [u8; 64]: Copy를 복사하므로 스택 원본을 명시적 소거
+        for b in &mut bytes {
+            unsafe {
+                volatile_write(b, 0);
+            }
         }
+        atomic_compiler_fence();
+        memory_barrier();
+        // self 드롭 시 KeccakState 의 Secret 필드가 자동 소거
+        digest
     }
 
     pub(crate) fn finalize_xof(mut self, out: &mut [u8]) {
         self.pad();
         self.squeeze_into(out);
-        // 여기서 `self`가 드롭됨 → KeccakState::Drop이 상태와 버퍼를 0으로 만듦
+        // self 드롭 시 KeccakState 의 Secret 필드가 자동 소거
     }
 }
