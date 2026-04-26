@@ -7,6 +7,7 @@
 
 use constant_time::{Choice, CtSelOps};
 use core::ops::{Add, Mul, Neg, Sub};
+use zeroize::Zeroize;
 
 const LIMBS: usize = 8;
 const LIMB_BITS: usize = 56;
@@ -303,3 +304,10 @@ impl PartialEq for FieldElement {
 }
 
 impl Eq for FieldElement {}
+
+impl Zeroize for FieldElement {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
