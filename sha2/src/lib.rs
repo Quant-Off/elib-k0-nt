@@ -3,8 +3,9 @@
 mod sha2_256;
 mod sha2_512;
 
-use core::ptr::write_volatile;
 use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::volatile::volatile_write;
+use zeroize::{Secret, Zeroize};
 
 pub trait SHA2: Sized {
     fn new() -> Self;
@@ -19,7 +20,7 @@ pub trait SHA2: Sized {
 //
 
 pub struct Digest {
-    bytes: [u8; 64],
+    bytes: Secret<[u8; 64]>,
     len: usize, // 28/32 (SHA-256 family) or 48/64 (SHA-512 family)
 }
 
@@ -31,14 +32,10 @@ impl Digest {
     }
 }
 
-impl Drop for Digest {
-    fn drop(&mut self) {
-        for b in &mut self.bytes {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for Digest {
+    #[inline(always)]
+    fn zeroize(&mut self) {
+        self.bytes.zeroize();
     }
 }
 
@@ -49,27 +46,24 @@ impl Drop for Digest {
 //
 
 pub(crate) struct SHA256State {
-    pub(crate) state: [u32; 8],
-    pub(crate) buffer: [u8; 64],
+    pub(crate) state: Secret<[u32; 8]>,
+    pub(crate) buffer: Secret<[u8; 64]>,
     pub(crate) buffer_len: usize,
     pub(crate) total_len: u64,
     pub(crate) is_224: bool,
 }
 
+impl Zeroize for SHA256State {
+    fn zeroize(&mut self) {
+        self.state.zeroize();
+        self.buffer.zeroize();
+    }
+}
+
 impl Drop for SHA256State {
     fn drop(&mut self) {
-        for s in &mut self.state {
-            unsafe {
-                write_volatile(s, 0);
-            }
-        }
-        for b in &mut self.buffer {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
         unsafe {
-            write_volatile(&mut self.total_len, 0);
+            volatile_write(&mut self.total_len, 0);
         }
         compiler_fence(Ordering::SeqCst);
     }
@@ -82,27 +76,24 @@ impl Drop for SHA256State {
 //
 
 pub(crate) struct SHA512State {
-    pub(crate) state: [u64; 8],
-    pub(crate) buffer: [u8; 128],
+    pub(crate) state: Secret<[u64; 8]>,
+    pub(crate) buffer: Secret<[u8; 128]>,
     pub(crate) buffer_len: usize,
     pub(crate) total_len: u64,
     pub(crate) is_384: bool,
 }
 
+impl Zeroize for SHA512State {
+    fn zeroize(&mut self) {
+        self.state.zeroize();
+        self.buffer.zeroize();
+    }
+}
+
 impl Drop for SHA512State {
     fn drop(&mut self) {
-        for s in &mut self.state {
-            unsafe {
-                write_volatile(s, 0);
-            }
-        }
-        for b in &mut self.buffer {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
         unsafe {
-            write_volatile(&mut self.total_len, 0);
+            volatile_write(&mut self.total_len, 0);
         }
         compiler_fence(Ordering::SeqCst);
     }

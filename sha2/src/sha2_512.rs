@@ -1,7 +1,6 @@
 use crate::{Digest, SHA512State};
 use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::{Secret, Zeroize};
 
 const SHA_512_K: [u64; 80] = [
     0x428a2f98d728ae22,
@@ -114,8 +113,8 @@ impl SHA512State {
             ]
         };
         Self {
-            state,
-            buffer: [0u8; 128],
+            state: Secret::new(state),
+            buffer: Secret::new([0u8; 128]),
             buffer_len: 0,
             total_len: 0,
             is_384,
@@ -123,7 +122,8 @@ impl SHA512State {
     }
 
     fn process_block(&mut self, block: &[u8; 128]) {
-        let mut w = [0u64; 80];
+        // 메시지 스케줄과 워킹 변수는 Secret 으로 보호하여 Drop 시 자동 소거
+        let mut w = Secret::new([0u64; 80]);
 
         for i in 0..16 {
             w[i] = u64::from_be_bytes([
@@ -148,7 +148,7 @@ impl SHA512State {
                 .wrapping_add(s1);
         }
 
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *self.state.expose();
 
         for i in 0..80 {
             // Σ1(e) = ROTR14(e) ⊕ ROTR18(e) ⊕ ROTR41(e)
@@ -184,12 +184,15 @@ impl SHA512State {
         self.state[6] = self.state[6].wrapping_add(g);
         self.state[7] = self.state[7].wrapping_add(h);
 
-        for item in &mut w {
-            unsafe {
-                write_volatile(item, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+        // 워킹 변수 명시적 소거 (w 는 Secret 으로 자동 소거)
+        a.zeroize();
+        b.zeroize();
+        c.zeroize();
+        d.zeroize();
+        e.zeroize();
+        f.zeroize();
+        g.zeroize();
+        h.zeroize();
     }
 
     pub(crate) fn update(&mut self, data: &[u8]) {
@@ -215,14 +218,11 @@ impl SHA512State {
             i += chunk_len;
 
             if self.buffer_len == 128 {
-                let block = self.buffer;
-                self.process_block(&block);
-                for b in &mut self.buffer {
-                    unsafe {
-                        write_volatile(b, 0);
-                    }
-                }
-                compiler_fence(Ordering::SeqCst);
+                let block = Secret::new(*self.buffer.expose());
+                self.process_block(block.expose());
+                // block 은 스코프 종료 시 Secret::Drop 으로 소거
+                // 버퍼는 다음 블록 패딩 가정(buffer[buf_len+1..]==0)을 위해 즉시 소거
+                self.buffer.zeroize();
                 self.buffer_len = 0;
             }
         }
@@ -232,7 +232,6 @@ impl SHA512State {
         let buf_len = self.buffer_len;
 
         // 필수 0x80 패딩 바이트 추가
-        // buffer[buf_len+1 ..]는 이미 0임 (update의 각 블록 이후 삭제됨)
         self.buffer[buf_len] = 0x80;
         self.buffer_len += 1;
 
@@ -257,23 +256,24 @@ impl SHA512State {
         //   select(a, b, choice) -> choice==1일 때 b, choice==0일 때 a
         //   not_extra==1 -> 길이 값 주입
         //   not_extra==0 -> 버퍼 내용 유지
-        let mut block1 = self.buffer;
+        let mut block1 = Secret::new(*self.buffer.expose());
         for j in 0..8usize {
             let orig_hi = block1[112 + j];
             let orig_lo = block1[120 + j];
             block1[112 + j] = u8::select(&orig_hi, &0u8, not_extra);
             block1[120 + j] = u8::select(&orig_lo, &total_len_bytes[j], not_extra);
         }
-        self.process_block(&block1);
+        self.process_block(block1.expose());
 
-        let mut state_b1 = self.state;
+        // block1 처리 후 상태 사본 (!needs_extra 경로 복원용)
+        let state_b1 = Secret::new(*self.state.expose());
 
         // 블록2
         // 데이터 길이에 따른 분기를 피하기 위해 무조건 처리
         // needs_extra == 1일 때만 의미 있음
-        let mut block2 = [0u8; 128];
+        let mut block2 = Secret::new([0u8; 128]);
         block2[120..128].copy_from_slice(&total_len_bytes);
-        self.process_block(&block2);
+        self.process_block(block2.expose());
 
         // CT 상태 선택:
         //   needs_extra==1 -> self.state 유지 (블록2 이후)
@@ -288,41 +288,22 @@ impl SHA512State {
         // SHA-384: 6 워드 × 8 바이트 = 48 바이트
         // SHA-512: 8 워드 × 8 바이트 = 64 바이트
         let digest_len = if self.is_384 { 48usize } else { 64usize };
-        let mut bytes = [0u8; 64];
+        let mut bytes = Secret::new([0u8; 64]);
         for i in 0..8usize {
-            let word_bytes = self.state[i].to_be_bytes(); // [u8; 8]
+            let word_bytes = self.state[i].to_be_bytes();
             bytes[i * 8..i * 8 + 8].copy_from_slice(&word_bytes);
         }
         // SHA-384에서 사용되지 않는 7번째 및 8번째 워드를 읽기 전에 삭제
         // bytes[48..64]는 SHA-384의 as_bytes()를 통해 노출되지 않지만, 0으로 만드는 것은
         // 메모리에 상주하는 시간을 제한함
         if self.is_384 {
-            for b in &mut bytes[48..64] {
-                unsafe {
-                    write_volatile(b, 0);
-                }
+            for b in bytes.expose_mut()[48..64].iter_mut() {
+                b.zeroize();
             }
         }
 
-        for b in &mut block1 {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
-        for b in &mut block2 {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
-        for s in &mut state_b1 {
-            unsafe {
-                write_volatile(s, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
-
-        // 여기서 `self`가 드롭됨 -> SHA512State::Drop이 state, buffer, total_len을 0으로 만듦
-        // 호출자가 `bytes` 사용을 마치면 Digest::Drop이 이를 0으로 만듦
+        // block1, block2, state_b1: 스코프 종료 시 Secret::Drop 으로 소거
+        // self: 함수 종료 시 SHA512State::Drop 과 Secret 필드 Drop 으로 소거
         Digest {
             bytes,
             len: digest_len,

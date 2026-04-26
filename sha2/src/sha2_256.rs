@@ -1,7 +1,6 @@
 use crate::{Digest, SHA256State};
 use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::{Secret, Zeroize};
 
 const SHA_256_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -28,8 +27,8 @@ impl SHA256State {
             ]
         };
         Self {
-            state,
-            buffer: [0u8; 64],
+            state: Secret::new(state),
+            buffer: Secret::new([0u8; 64]),
             buffer_len: 0,
             total_len: 0,
             is_224,
@@ -37,7 +36,8 @@ impl SHA256State {
     }
 
     fn process_block(&mut self, block: &[u8; 64]) {
-        let mut w = [0u32; 64];
+        // 메시지 스케줄과 워킹 변수는 Secret 으로 보호하여 Drop 시 자동 소거
+        let mut w = Secret::new([0u32; 64]);
 
         for i in 0..16 {
             w[i] = u32::from_be_bytes([
@@ -56,7 +56,7 @@ impl SHA256State {
                 .wrapping_add(s1);
         }
 
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *self.state.expose();
 
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
@@ -90,13 +90,15 @@ impl SHA256State {
         self.state[6] = self.state[6].wrapping_add(g);
         self.state[7] = self.state[7].wrapping_add(h);
 
-        // 확장된 메시지 스케줄을 안전하게 삭제
-        for item in &mut w {
-            unsafe {
-                write_volatile(item, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
+        // 워킹 변수 명시적 소거 (w 는 Secret 으로 자동 소거)
+        a.zeroize();
+        b.zeroize();
+        c.zeroize();
+        d.zeroize();
+        e.zeroize();
+        f.zeroize();
+        g.zeroize();
+        h.zeroize();
     }
 
     pub(crate) fn update(&mut self, data: &[u8]) {
@@ -124,15 +126,11 @@ impl SHA256State {
             i += chunk_len;
 
             if self.buffer_len == 64 {
-                let block = self.buffer;
-                self.process_block(&block);
-                // 버퍼 지우기, 펜스 후 buffer_len == 0
-                for b in &mut self.buffer {
-                    unsafe {
-                        write_volatile(b, 0);
-                    }
-                }
-                compiler_fence(Ordering::SeqCst);
+                let block = Secret::new(*self.buffer.expose());
+                self.process_block(block.expose());
+                // block 은 스코프 종료 시 Secret::Drop 으로 소거
+                // 버퍼는 다음 블록 패딩 가정(buffer[buf_len+1..]==0)을 위해 즉시 소거
+                self.buffer.zeroize();
                 self.buffer_len = 0;
             }
         }
@@ -142,7 +140,8 @@ impl SHA256State {
         let buf_len = self.buffer_len;
 
         // 필수 0x80 패딩 바이트 추가
-        // buffer[buf_len+1 ..]는 이미 0임 (update의 각 블록 이후 삭제됨)
+        // buffer[buf_len+1 ..]는 이전 블록 처리 후 잔존 데이터일 수 있으나,
+        // 아래 block1 구성 시 길이 필드 이전 영역은 그대로 유지되므로 안전함
         self.buffer[buf_len] = 0x80;
         self.buffer_len += 1;
 
@@ -163,23 +162,23 @@ impl SHA256State {
         //   select(a, b, choice) -> choice==1일 때 b, choice==0일 때 a
         //   not_extra==1 -> total_len_bytes[j]  (길이 주입)
         //   not_extra==0 -> orig                (버퍼 내용 유지)
-        let mut block1 = self.buffer;
+        let mut block1 = Secret::new(*self.buffer.expose());
         for j in 0..8usize {
             let orig = block1[56 + j];
             block1[56 + j] = u8::select(&orig, &total_len_bytes[j], not_extra);
         }
-        self.process_block(&block1);
+        self.process_block(block1.expose());
 
-        // block1 이후 상태를 저장하여 !needs_extra 경로에서 복원할 수 있도록 함
-        let mut state_b1 = self.state;
+        // block1 처리 후 상태 사본 (!needs_extra 경로 복원용)
+        let state_b1 = Secret::new(*self.state.expose());
 
         // 블록2
         // 항상 처리됨, needs_extra == 1일 때만 의미 있음
         // needs_extra == 0일 때는 추가 작업이지만, 데이터 길이에 따른 분기를 피하기 위해
         // 무조건 수행
-        let mut block2 = [0u8; 64];
+        let mut block2 = Secret::new([0u8; 64]);
         block2[56..64].copy_from_slice(&total_len_bytes);
-        self.process_block(&block2);
+        self.process_block(block2.expose());
 
         // CT 상태 선택:
         //   needs_extra==1 -> 두 블록 모두 필요 -> self.state 유지 (블록2 이후)
@@ -194,7 +193,7 @@ impl SHA256State {
 
         // 다이제스트 빌드
         let digest_len = if self.is_224 { 28usize } else { 32usize };
-        let mut bytes = [0u8; 64];
+        let mut bytes = Secret::new([0u8; 64]);
         for i in 0..8usize {
             let word_bytes = self.state[i].to_be_bytes();
             bytes[i * 4..i * 4 + 4].copy_from_slice(&word_bytes);
@@ -203,34 +202,13 @@ impl SHA256State {
         // (digest_len == 28은 bytes[28..32]가 as_bytes()를 통해 노출되지 않음을 의미하지만,
         // 여기서 0으로 만드는 것은 메모리에 상주하는 시간을 제한함)
         if self.is_224 {
-            for b in &mut bytes[28..32] {
-                unsafe {
-                    write_volatile(b, 0);
-                }
+            for b in bytes.expose_mut()[28..32].iter_mut() {
+                b.zeroize();
             }
         }
 
-        // 반환하기 전에 모든 임시 변수 삭제
-        for b in &mut block1 {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
-        for b in &mut block2 {
-            unsafe {
-                write_volatile(b, 0);
-            }
-        }
-        for s in &mut state_b1 {
-            unsafe {
-                write_volatile(s, 0);
-            }
-        }
-        compiler_fence(Ordering::SeqCst);
-
-        // 여기서 `self`가 드롭됨 -> SHA256State::Drop이 state, buffer,
-        // total_len을 0으로 만듦, 호출자가 `bytes` 사용을 마치면
-        // Digest::Drop이 이를 0으로 만듦
+        // block1, block2, state_b1: 스코프 종료 시 Secret::Drop 으로 소거
+        // self: 함수 종료 시 SHA256State::Drop 과 Secret 필드 Drop 으로 소거
         Digest {
             bytes,
             len: digest_len,
