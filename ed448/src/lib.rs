@@ -32,12 +32,10 @@ mod field;
 mod point;
 mod scalar;
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
-
 use point::EdwardsPoint;
 use scalar::{Scalar, sc_muladd};
 use sha3::{SHAKE256, XOF};
+use zeroize::{Secret, Zeroize};
 
 pub const SIGNATURE_LENGTH: usize = 114;
 pub const SECRET_KEY_LENGTH: usize = 57;
@@ -53,38 +51,45 @@ pub enum Ed448Error {
     NonCanonicalScalar,
 }
 
-#[derive(Clone)]
-pub struct SecretKey([u8; SECRET_KEY_LENGTH]);
+/// Ed448 비밀키 (57바이트 시드)입니다.
+///
+/// Drop 시 내부 데이터가 `Secret` 의 Drop 으로 자동 소거됩니다.
+pub struct SecretKey(Secret<[u8; SECRET_KEY_LENGTH]>);
 
 impl SecretKey {
     #[inline]
     pub fn from_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Self {
-        SecretKey(*bytes)
+        SecretKey(Secret::new(*bytes))
     }
 
     #[inline]
     pub fn as_bytes(&self) -> &[u8; SECRET_KEY_LENGTH] {
-        &self.0
+        self.0.expose()
     }
 
     fn expand(&self) -> ExpandedSecretKey {
         let mut h = SHAKE256::new();
-        h.update(&self.0);
-        let mut hash = [0u8; 114];
-        h.finalize_into(&mut hash);
+        h.update(self.0.expose());
+        let mut hash = Secret::new([0u8; 114]);
+        h.finalize_into(hash.expose_mut());
 
-        let mut lower = [0u8; 57];
-        let mut upper = [0u8; 57];
-        lower.copy_from_slice(&hash[..57]);
-        upper.copy_from_slice(&hash[57..]);
+        let mut lower = Secret::new([0u8; 57]);
+        let mut upper = Secret::new([0u8; 57]);
+        lower.expose_mut().copy_from_slice(&hash.expose()[..57]);
+        upper.expose_mut().copy_from_slice(&hash.expose()[57..]);
 
-        lower[0] &= 0xfc;
-        lower[55] |= 0x80;
-        lower[56] = 0;
+        {
+            let lo = lower.expose_mut();
+            lo[0] &= 0xfc;
+            lo[55] |= 0x80;
+            lo[56] = 0;
+        }
 
-        // The clamped scalar may be >= L, so reduce it mod L
-        let clamped = Scalar::from_bytes(lower);
+        // 클램핑된 스칼라는 L 이상일 수 있으므로 mod L 리듀스
+        let mut clamped = Scalar::from_bytes(*lower.expose());
         let scalar = sc_muladd(&Scalar::one(), &clamped, &Scalar::zero());
+        clamped.zeroize();
+        // hash, lower 는 스코프 종료 시 Secret::Drop 으로 자동 소거
 
         ExpandedSecretKey {
             scalar,
@@ -93,26 +98,22 @@ impl SecretKey {
     }
 }
 
-impl Drop for SecretKey {
-    fn drop(&mut self) {
-        for b in &mut self.0 {
-            unsafe { write_volatile(b, 0) };
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Clone for SecretKey {
+    fn clone(&self) -> Self {
+        SecretKey(Secret::new(*self.0.expose()))
     }
 }
 
 struct ExpandedSecretKey {
     scalar: Scalar,
-    nonce: [u8; 57],
+    nonce: Secret<[u8; 57]>,
 }
 
 impl Drop for ExpandedSecretKey {
     fn drop(&mut self) {
-        for b in &mut self.nonce {
-            unsafe { write_volatile(b, 0) };
-        }
-        compiler_fence(Ordering::SeqCst);
+        // scalar 는 Copy 타입이므로 명시적 zeroize 호출
+        // nonce 는 Secret 의 Drop 으로 자동 소거됨
+        self.scalar.zeroize();
     }
 }
 
@@ -187,35 +188,47 @@ pub fn sign_with_context(message: &[u8], secret_key: &SecretKey, context: &[u8])
     let public_key = PublicKey::from(secret_key);
     let (dom, dom_len) = dom4(context);
 
+    // r = SHAKE256(dom || ctx || nonce || msg) mod L  (r 은 비밀 nonce)
     let mut h1 = SHAKE256::new();
     h1.update(&dom[..dom_len]);
     h1.update(context);
-    h1.update(&expanded.nonce);
+    h1.update(expanded.nonce.expose());
     h1.update(message);
-    let mut r_hash = [0u8; 114];
-    h1.finalize_into(&mut r_hash);
+    let mut r_hash = Secret::new([0u8; 114]);
+    h1.finalize_into(r_hash.expose_mut());
 
-    let r = Scalar::from_bytes_mod_order_wide(&r_hash);
+    let mut r = Scalar::from_bytes_mod_order_wide(r_hash.expose());
 
-    let r_point = EdwardsPoint::basepoint_mul(&r);
+    // R = r * B  (R 은 공개되지만 좌표는 r 에서 유도되므로 사용 후 소거)
+    let mut r_point = EdwardsPoint::basepoint_mul(&r);
     let r_bytes = r_point.to_bytes();
 
+    // k = SHAKE256(dom || ctx || R || A || msg) mod L
     let mut h2 = SHAKE256::new();
     h2.update(&dom[..dom_len]);
     h2.update(context);
     h2.update(&r_bytes);
     h2.update(public_key.as_bytes());
     h2.update(message);
-    let mut k_hash = [0u8; 114];
-    h2.finalize_into(&mut k_hash);
+    let mut k_hash = Secret::new([0u8; 114]);
+    h2.finalize_into(k_hash.expose_mut());
 
-    let k = Scalar::from_bytes_mod_order_wide(&k_hash);
+    let mut k = Scalar::from_bytes_mod_order_wide(k_hash.expose());
 
-    let s = sc_muladd(&k, &expanded.scalar, &r);
+    // s = (r + k * a) mod L
+    let mut s = sc_muladd(&k, &expanded.scalar, &r);
 
     let mut sig_bytes = [0u8; 114];
     sig_bytes[..57].copy_from_slice(&r_bytes);
     sig_bytes[57..].copy_from_slice(&s.to_bytes());
+
+    // 비밀 중간값 명시적 소거
+    r.zeroize();
+    k.zeroize();
+    s.zeroize();
+    r_point.zeroize();
+    // r_hash, k_hash: 스코프 종료 시 Secret::Drop 으로 자동 소거
+    // expanded: 스코프 종료 시 ExpandedSecretKey::Drop 으로 scalar/nonce 소거
 
     Signature(sig_bytes)
 }

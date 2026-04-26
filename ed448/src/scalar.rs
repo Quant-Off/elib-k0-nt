@@ -6,6 +6,7 @@
 )]
 
 use core::ops::{Add, Mul, Sub};
+use zeroize::Zeroize;
 
 pub const L_BYTES: [u8; 57] = [
     0xf3, 0x44, 0x58, 0xab, 0x92, 0xc2, 0x78, 0x23, 0x55, 0x8f, 0xc5, 0x8d, 0x72, 0xc2, 0x6c, 0x21,
@@ -38,18 +39,20 @@ impl Scalar {
     pub fn from_bytes_mod_order_wide(bytes: &[u8; 114]) -> Self {
         let mut s = [0u64; 18];
 
+        // 56-bit limb 으로 디코딩 (limb i 는 bytes[i*7 .. (i+1)*7] 을 LE 로 패킹)
+        // 114바이트 입력은 limb 16 (bytes[112..114]) 의 하위 16비트까지만 사용,
+        // limb 17 은 0
         for i in 0..18 {
             let offset = i * 7;
             let end = if offset + 7 <= 114 { offset + 7 } else { 114 };
+            if offset >= 114 {
+                break;
+            }
             let mut word = 0u64;
             for j in offset..end {
                 word |= (bytes[j] as u64) << ((j - offset) * 8);
             }
             s[i] = word & 0x00FFFFFFFFFFFFFF;
-        }
-        s[16] = (s[16] & 0xFFFFFFFFFFFF) | ((bytes[112] as u64) << 48);
-        if 113 < 114 {
-            s[16] |= (bytes[113] as u64) << 56;
         }
 
         sc_reduce_wide(&mut s);
@@ -312,6 +315,13 @@ impl PartialEq for Scalar {
 }
 
 impl Eq for Scalar {}
+
+impl Zeroize for Scalar {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 #[cfg(test)]
 mod tests {
