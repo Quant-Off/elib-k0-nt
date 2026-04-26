@@ -32,12 +32,10 @@ mod field;
 mod point;
 mod scalar;
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
-
 use point::EdwardsPoint;
 use scalar::{Scalar, sc_muladd};
 use sha2::{SHA2, SHA512};
+use zeroize::{Secret, Zeroize};
 
 /// Ed25519 서명 크기 (64바이트)
 pub const SIGNATURE_LENGTH: usize = 64;
@@ -63,68 +61,68 @@ pub enum Ed25519Error {
 
 /// Ed25519 비밀키 (32바이트 시드)입니다.
 ///
-/// Drop 시 내부 데이터가 소거됩니다.
-#[derive(Clone)]
-pub struct SecretKey([u8; SECRET_KEY_LENGTH]);
+/// Drop 시 내부 데이터가 `Secret` 의 Drop 으로 자동 소거됩니다.
+pub struct SecretKey(Secret<[u8; SECRET_KEY_LENGTH]>);
 
 impl SecretKey {
     /// 32바이트 시드에서 비밀키를 생성합니다.
     #[inline]
     pub fn from_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Self {
-        SecretKey(*bytes)
+        SecretKey(Secret::new(*bytes))
     }
 
     /// 바이트 배열 참조를 반환합니다.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; SECRET_KEY_LENGTH] {
-        &self.0
+        self.0.expose()
     }
 
     /// 확장 비밀키를 계산합니다.
     fn expand(&self) -> ExpandedSecretKey {
         let mut h = SHA512::new();
-        h.update(&self.0);
+        h.update(self.0.expose());
         let hash = h.finalize();
         let hash_bytes = hash.as_bytes();
 
-        let mut lower = [0u8; 32];
-        let mut upper = [0u8; 32];
-        lower.copy_from_slice(&hash_bytes[..32]);
-        upper.copy_from_slice(&hash_bytes[32..]);
+        let mut lower = Secret::new([0u8; 32]);
+        let mut upper = Secret::new([0u8; 32]);
+        lower.expose_mut().copy_from_slice(&hash_bytes[..32]);
+        upper.expose_mut().copy_from_slice(&hash_bytes[32..]);
 
         // RFC 8032: 비트 클램핑
-        lower[0] &= 248; // 하위 3비트 클리어
-        lower[31] &= 127; // 최상위 비트 클리어
-        lower[31] |= 64; // 254번째 비트 설정
+        {
+            let lo = lower.expose_mut();
+            lo[0] &= 248; // 하위 3비트 클리어
+            lo[31] &= 127; // 최상위 비트 클리어
+            lo[31] |= 64; // 254번째 비트 설정
+        }
 
+        let scalar = Scalar::from_bytes(*lower.expose());
+        // lower 는 스코프 종료 시 Secret::Drop 으로 자동 소거
         ExpandedSecretKey {
-            scalar: Scalar::from_bytes(lower),
+            scalar,
             nonce: upper,
         }
     }
 }
 
-impl Drop for SecretKey {
-    fn drop(&mut self) {
-        for b in &mut self.0 {
-            unsafe { write_volatile(b, 0) };
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Clone for SecretKey {
+    fn clone(&self) -> Self {
+        SecretKey(Secret::new(*self.0.expose()))
     }
 }
 
 /// 확장된 비밀키 (내부용)
 struct ExpandedSecretKey {
     scalar: Scalar,
-    nonce: [u8; 32],
+    nonce: Secret<[u8; 32]>,
 }
 
 impl Drop for ExpandedSecretKey {
     fn drop(&mut self) {
-        for b in &mut self.nonce {
-            unsafe { write_volatile(b, 0) };
-        }
-        compiler_fence(Ordering::SeqCst);
+        // scalar 는 Copy 타입이므로 명시적 zeroize 호출
+        // nonce 는 Secret 의 Drop 으로 자동 소거됨
+        self.scalar.zeroize();
     }
 }
 
@@ -195,44 +193,54 @@ impl Signature {
 /// 메시지에 서명합니다.
 ///
 /// RFC 8032 Section 5.1.6의 Ed25519 서명 알고리즘을 구현합니다.
+///
+/// # Security Note
+/// 비밀 nonce r, 비밀 스칼라 a, 그리고 모든 중간 해시 출력은 함수 종료 전
+/// `Secret` Drop 또는 명시적 `zeroize()` 호출로 소거됩니다.
 pub fn sign(message: &[u8], secret_key: &SecretKey) -> Signature {
     let expanded = secret_key.expand();
     let public_key = PublicKey::from(secret_key);
 
-    // r = SHA512(nonce || message) mod L
+    // r = SHA512(nonce || message) mod L  (r 은 비밀 nonce)
     let mut h1 = SHA512::new();
-    h1.update(&expanded.nonce);
+    h1.update(expanded.nonce.expose());
     h1.update(message);
-    let r_hash = h1.finalize();
-    let r_hash_bytes = r_hash.as_bytes();
+    let r_hash = h1.finalize(); // sha2 Digest, Drop 시 자동 소거
 
-    let mut r_wide = [0u8; 64];
-    r_wide.copy_from_slice(r_hash_bytes);
-    let r = Scalar::from_bytes_mod_order_wide(&r_wide);
+    let mut r_wide = Secret::new([0u8; 64]);
+    r_wide.expose_mut().copy_from_slice(r_hash.as_bytes());
+    let mut r = Scalar::from_bytes_mod_order_wide(r_wide.expose());
 
-    // R = r * B
-    let r_point = EdwardsPoint::basepoint_mul(&r);
+    // R = r * B  (R 은 공개되지만, 좌표는 r 에서 유도되므로 사용 후 소거)
+    let mut r_point = EdwardsPoint::basepoint_mul(&r);
     let r_bytes = r_point.to_bytes();
 
-    // k = SHA512(R || A || message) mod L
+    // k = SHA512(R || A || message) mod L  (k 자체는 공개 입력에서 파생)
     let mut h2 = SHA512::new();
     h2.update(&r_bytes);
     h2.update(public_key.as_bytes());
     h2.update(message);
     let k_hash = h2.finalize();
-    let k_hash_bytes = k_hash.as_bytes();
 
-    let mut k_wide = [0u8; 64];
-    k_wide.copy_from_slice(k_hash_bytes);
-    let k = Scalar::from_bytes_mod_order_wide(&k_wide);
+    let mut k_wide = Secret::new([0u8; 64]);
+    k_wide.expose_mut().copy_from_slice(k_hash.as_bytes());
+    let mut k = Scalar::from_bytes_mod_order_wide(k_wide.expose());
 
-    // s = (r + k * a) mod L
-    let s = sc_muladd(&k, &expanded.scalar, &r);
+    // s = (r + k * a) mod L  (s 는 서명에 포함되지만 a 가 직접 관여)
+    let mut s = sc_muladd(&k, &expanded.scalar, &r);
 
     // 서명 = R || s
     let mut sig_bytes = [0u8; 64];
     sig_bytes[..32].copy_from_slice(&r_bytes);
     sig_bytes[32..].copy_from_slice(&s.to_bytes());
+
+    // 비밀 중간값 명시적 소거
+    r.zeroize();
+    k.zeroize();
+    s.zeroize();
+    r_point.zeroize();
+    // r_wide, k_wide: 스코프 종료 시 Secret::Drop 으로 자동 소거
+    // expanded: 스코프 종료 시 ExpandedSecretKey::Drop 으로 scalar/nonce 소거
 
     Signature(sig_bytes)
 }

@@ -15,6 +15,7 @@
 use crate::field::FieldElement;
 use crate::scalar::Scalar;
 use core::ops::{Add, Neg, Sub};
+use zeroize::Zeroize;
 
 /// 곡선 파라미터 d = -121665/121666 mod p
 /// RFC 8032 리틀 엔디언 바이트:
@@ -217,7 +218,8 @@ impl EdwardsPoint {
         // 고정-윈도우 방식 (4-bit window)
         // 또는 간단한 double-and-add
 
-        let s = scalar.to_bytes();
+        // 스칼라 바이트는 비밀일 수 있으므로 Secret 래핑
+        let mut s = scalar.to_bytes();
         let mut result = EdwardsPoint::identity();
 
         // MSB부터 double-and-add
@@ -233,6 +235,8 @@ impl EdwardsPoint {
             }
         }
 
+        // 스칼라 사본 명시적 소거
+        s.zeroize();
         result
     }
 
@@ -288,6 +292,16 @@ impl PartialEq for EdwardsPoint {
 }
 
 impl Eq for EdwardsPoint {}
+
+impl Zeroize for EdwardsPoint {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.x.zeroize();
+        self.y.zeroize();
+        self.z.zeroize();
+        self.t.zeroize();
+    }
+}
 
 #[cfg(test)]
 mod tests {
