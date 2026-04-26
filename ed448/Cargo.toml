@@ -6,3 +6,4 @@ authors.workspace = true
 
 [dependencies]
 sha3.workspace = true
+zeroize.workspace = true

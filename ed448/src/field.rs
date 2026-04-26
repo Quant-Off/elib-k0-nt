@@ -1,6 +1,7 @@
 #![allow(clippy::unusual_byte_groupings, clippy::needless_range_loop, dead_code)]
 
 use core::ops::{Add, Mul, Neg, Sub};
+use zeroize::Zeroize;
 
 const LIMBS: usize = 8;
 const LIMB_BITS: usize = 56;
@@ -401,6 +402,13 @@ impl PartialEq for FieldElement {
 }
 
 impl Eq for FieldElement {}
+
+impl Zeroize for FieldElement {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 #[cfg(test)]
 mod tests {
