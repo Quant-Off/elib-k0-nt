@@ -32,12 +32,3 @@ pub fn expand_key(key: &[u8; 32]) -> [u32; NB * (NR + 1)] {
 
     w
 }
-
-pub fn zeroize_round_keys(keys: &mut [u32; NB * (NR + 1)]) {
-    for k in keys.iter_mut() {
-        unsafe {
-            core::ptr::write_volatile(k, 0);
-        }
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-}

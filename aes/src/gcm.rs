@@ -1,5 +1,6 @@
 use crate::AES256;
 use crate::ghash::GHash;
+use zeroize::Zeroize;
 
 pub const GCM_TAG_SIZE: usize = 16;
 pub const GCM_NONCE_SIZE: usize = 12;
@@ -130,16 +131,51 @@ impl AES256GCM {
 
 impl Drop for AES256GCM {
     fn drop(&mut self) {
-        unsafe {
-            core::ptr::write_volatile(&mut self.h, [0u8; 16]);
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        self.h.zeroize();
+        // cipher 필드의 round_keys 는 AES256 의 Drop 에서 Secret::Drop 으로 자동 소거됨
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// AES256GCM 의 h (해시 서브키 = AES_K(0^128)) 는 키 정보 누출 위험.
+    /// Drop 후 h 와 내부 AES round_keys 가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_aes256gcm_zeroize_on_drop() {
+        let key = [0x5Au8; 32];
+        let mut storage: MaybeUninit<AES256GCM> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(AES256GCM::new(&key));
+            let h_ptr = storage.assume_init_ref().h.as_ptr();
+            let rk_ptr = storage
+                .assume_init_ref()
+                .cipher
+                .round_keys
+                .expose()
+                .as_ptr() as *const u8;
+            let rk_len = core::mem::size_of::<[u32; 60]>();
+
+            let pre_h = core::slice::from_raw_parts(h_ptr, 16);
+            assert!(pre_h.iter().any(|&b| b != 0), "GCM h 가 비어 있음");
+
+            storage.assume_init_drop();
+
+            let post_h = core::slice::from_raw_parts(h_ptr, 16);
+            let post_rk = core::slice::from_raw_parts(rk_ptr, rk_len);
+            assert!(
+                post_h.iter().all(|&b| b == 0),
+                "GCM h 가 Drop 후 소거되지 않음"
+            );
+            assert!(
+                post_rk.iter().all(|&b| b == 0),
+                "GCM 내부 AES256 round_keys 가 Drop 후 소거되지 않음"
+            );
+        }
+    }
 
     #[test]
     fn gcm_test_case_14() {

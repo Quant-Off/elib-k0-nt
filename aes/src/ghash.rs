@@ -1,3 +1,5 @@
+use zeroize::Zeroize;
+
 const R: u128 = 0xe100_0000_0000_0000_0000_0000_0000_0000;
 
 #[inline]
@@ -64,17 +66,44 @@ impl GHash {
 
 impl Drop for GHash {
     fn drop(&mut self) {
-        unsafe {
-            core::ptr::write_volatile(&mut self.h, 0);
-            core::ptr::write_volatile(&mut self.state, 0);
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        self.h.zeroize();
+        self.state.zeroize();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// GHash 의 h (인증 서브키) 와 state 는 모두 비밀.
+    /// Drop 후 메모리가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_ghash_zeroize_on_drop() {
+        let h: [u8; 16] = [0xDEu8; 16];
+        let mut storage: MaybeUninit<GHash> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(GHash::new(&h));
+            // update 로 state 를 0 이 아닌 값으로 만듦
+            (*storage.as_mut_ptr()).update(&[0xAAu8; 16]);
+
+            let h_ptr = &raw const (*storage.as_ptr()).h as *const u8;
+            let s_ptr = &raw const (*storage.as_ptr()).state as *const u8;
+
+            let pre_h = core::slice::from_raw_parts(h_ptr, 16);
+            let pre_s = core::slice::from_raw_parts(s_ptr, 16);
+            assert!(pre_h.iter().any(|&b| b != 0), "GHash h 가 비어 있음");
+            assert!(pre_s.iter().any(|&b| b != 0), "GHash state 가 비어 있음");
+
+            storage.assume_init_drop();
+
+            let post_h = core::slice::from_raw_parts(h_ptr, 16);
+            let post_s = core::slice::from_raw_parts(s_ptr, 16);
+            assert!(post_h.iter().all(|&b| b == 0), "GHash h 미소거");
+            assert!(post_s.iter().all(|&b| b == 0), "GHash state 미소거");
+        }
+    }
 
     #[test]
     fn ghash_basic() {
