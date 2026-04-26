@@ -45,7 +45,8 @@ pub use gcm::{AES256GCM, GCM_NONCE_SIZE, GCM_TAG_SIZE};
 pub use ghash::GHash;
 
 use block::{decrypt_block, encrypt_block};
-use key::{expand_key, zeroize_round_keys};
+use key::expand_key;
+use zeroize::Secret;
 
 const NB: usize = 4;
 const NR: usize = 14;
@@ -54,8 +55,10 @@ pub const KEY_SIZE: usize = 32;
 pub const BLOCK_SIZE: usize = 16;
 
 /// AES-256 블록 암호 구조체입니다.
+///
+/// 라운드 키는 `Secret` 으로 보호되어 Drop 시 자동 소거됩니다.
 pub struct AES256 {
-    round_keys: [u32; NB * (NR + 1)],
+    round_keys: Secret<[u32; NB * (NR + 1)]>,
 }
 
 impl AES256 {
@@ -66,7 +69,7 @@ impl AES256 {
     #[must_use]
     pub fn new(key: &[u8; KEY_SIZE]) -> Self {
         Self {
-            round_keys: expand_key(key),
+            round_keys: Secret::new(expand_key(key)),
         }
     }
 
@@ -76,7 +79,7 @@ impl AES256 {
     /// - `block`: 16바이트 평문 블록
     #[must_use]
     pub fn encrypt(&self, block: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
-        encrypt_block(block, &self.round_keys)
+        encrypt_block(block, self.round_keys.expose())
     }
 
     /// 16바이트 블록을 복호화합니다.
@@ -85,19 +88,43 @@ impl AES256 {
     /// - `block`: 16바이트 암호문 블록
     #[must_use]
     pub fn decrypt(&self, block: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
-        decrypt_block(block, &self.round_keys)
-    }
-}
-
-impl Drop for AES256 {
-    fn drop(&mut self) {
-        zeroize_round_keys(&mut self.round_keys);
+        decrypt_block(block, self.round_keys.expose())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// AES256 의 round_keys 는 expand_key 결과로 키 정보를 포함.
+    /// Drop 후 round_keys 메모리가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_aes256_zeroize_on_drop() {
+        let key = [0xA5u8; KEY_SIZE];
+        let mut storage: MaybeUninit<AES256> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(AES256::new(&key));
+            // Secret<[u32; 60]> 의 inner 위치에 round_keys 저장
+            let ptr = storage.assume_init_ref().round_keys.expose().as_ptr() as *const u8;
+            let byte_len = core::mem::size_of::<[u32; NB * (NR + 1)]>();
+
+            let pre = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                pre.iter().any(|&b| b != 0),
+                "round_keys 가 비어 있음 — expand_key 가 동작하지 않음"
+            );
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "AES256 round_keys 가 Drop 후 소거되지 않음"
+            );
+        }
+    }
 
     #[test]
     fn fips197_c3_test_vector() {
