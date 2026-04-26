@@ -13,6 +13,7 @@
 )]
 
 use core::ops::{Add, Mul, Neg, Sub};
+use zeroize::Zeroize;
 
 /// 필드 소수 p = 2^255 - 19
 /// 리틀 엔디언 limbs (5 × 51-bit)
@@ -531,6 +532,13 @@ impl PartialEq for FieldElement {
 }
 
 impl Eq for FieldElement {}
+
+impl Zeroize for FieldElement {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 #[cfg(test)]
 mod tests {
