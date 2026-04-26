@@ -7,6 +7,7 @@
 
 use constant_time::{Choice, CtSelOps};
 use core::ops::{Add, Mul, Neg, Sub};
+use zeroize::Zeroize;
 
 const MASK51: u64 = (1u64 << 51) - 1;
 
@@ -299,3 +300,10 @@ impl PartialEq for FieldElement {
 }
 
 impl Eq for FieldElement {}
+
+impl Zeroize for FieldElement {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}

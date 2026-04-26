@@ -35,38 +35,34 @@
 mod field;
 
 use constant_time::{Choice, CtEqOps};
-use core::hint::black_box;
 use field::FieldElement;
+use zeroize::{Secret, Zeroize};
 
 const BASEPOINT_U: [u8; 32] = [
     9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-pub struct SecretKey([u8; 32]);
+pub struct SecretKey(Secret<[u8; 32]>);
 
 impl SecretKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        SecretKey(bytes)
+        SecretKey(Secret::new(bytes))
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+        self.0.expose()
     }
 
     pub fn public_key(&self) -> PublicKey {
-        let public_bytes = x25519_base(&self.0);
+        let public_bytes = x25519_base(self.0.expose());
         PublicKey(public_bytes)
     }
 
     pub fn diffie_hellman(&self, their_public: &PublicKey) -> SharedSecret {
-        let shared = x25519(&self.0, &their_public.0);
-        SharedSecret(shared)
-    }
-}
-
-impl Drop for SecretKey {
-    fn drop(&mut self) {
-        zeroize(&mut self.0);
+        let mut shared = x25519(self.0.expose(), &their_public.0);
+        let result = SharedSecret(Secret::new(shared));
+        shared.zeroize();
+        result
     }
 }
 
@@ -82,25 +78,19 @@ impl PublicKey {
     }
 }
 
-pub struct SharedSecret([u8; 32]);
+pub struct SharedSecret(Secret<[u8; 32]>);
 
 impl SharedSecret {
     pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+        self.0.expose()
     }
 
     pub fn is_zero(&self) -> bool {
         let mut acc = 0u8;
-        for b in &self.0 {
+        for b in self.0.expose() {
             acc |= *b;
         }
         acc == 0
-    }
-}
-
-impl Drop for SharedSecret {
-    fn drop(&mut self) {
-        zeroize(&mut self.0);
     }
 }
 
@@ -115,20 +105,16 @@ fn x25519_base(k: &[u8; 32]) -> [u8; 32] {
 }
 
 fn x25519(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
-    let mut scalar = *k;
-    clamp_scalar(&mut scalar);
-
-    let result = montgomery_ladder(&scalar, u);
-
-    zeroize(&mut scalar);
-
-    result
+    let mut scalar = Secret::new(*k);
+    clamp_scalar(scalar.expose_mut());
+    montgomery_ladder(scalar.expose(), u)
+    // scalar 는 스코프 종료 시 Secret::Drop 으로 자동 소거
 }
 
 fn montgomery_ladder(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
-    let u_coord = FieldElement::from_bytes(u);
+    let mut u_coord = FieldElement::from_bytes(u);
 
-    let x_1 = u_coord;
+    let mut x_1 = u_coord;
     let mut x_2 = FieldElement::one();
     let mut z_2 = FieldElement::zero();
     let mut x_3 = u_coord;
@@ -169,8 +155,22 @@ fn montgomery_ladder(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
     FieldElement::conditional_swap(&mut x_2, &mut x_3, choice);
     FieldElement::conditional_swap(&mut z_2, &mut z_3, choice);
 
-    let result = x_2 * z_2.invert();
-    result.to_bytes()
+    let mut z_2_inv = z_2.invert();
+    let mut result = x_2 * z_2_inv;
+    let bytes = result.to_bytes();
+
+    // 민감 중간값 명시적 소거
+    u_coord.zeroize();
+    x_1.zeroize();
+    x_2.zeroize();
+    z_2.zeroize();
+    x_3.zeroize();
+    z_3.zeroize();
+    z_2_inv.zeroize();
+    result.zeroize();
+    swap.zeroize();
+
+    bytes
 }
 
 fn mul_by_a24(e: FieldElement) -> FieldElement {
@@ -210,25 +210,18 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
     FieldElement([c0 as u64, c1 as u64, c2 as u64, c3 as u64, c4 as u64])
 }
 
-#[inline(never)]
-fn zeroize(data: &mut [u8; 32]) {
-    for byte in data.iter_mut() {
-        *byte = 0;
-    }
-    let _ = black_box(data);
-}
-
 pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R) -> (SecretKey, PublicKey) {
     let mut secret_bytes = [0u8; 32];
     rng(&mut secret_bytes);
     let secret = SecretKey::from_bytes(secret_bytes);
+    secret_bytes.zeroize();
     let public = secret.public_key();
     (secret, public)
 }
 
 pub fn is_contributory(shared: &SharedSecret) -> Choice {
     let mut acc = 0u8;
-    for b in shared.0.iter() {
+    for b in shared.0.expose().iter() {
         acc |= *b;
     }
     CtEqOps::ne(&acc, &0)
@@ -237,6 +230,97 @@ pub fn is_contributory(shared: &SharedSecret) -> Choice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
+
+    /// SecretKey 의 Drop 으로 내부 32바이트가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_secret_key_zeroize_on_drop() {
+        let pattern: u8 = 0xAB;
+        let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(SecretKey::from_bytes([pattern; 32]));
+            let ptr = storage.assume_init_ref().as_bytes().as_ptr();
+
+            let pre = core::slice::from_raw_parts(ptr, 32);
+            assert!(pre.iter().all(|&b| b == pattern), "초기 패턴 미반영");
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, 32);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "SecretKey 메모리가 Drop 후 소거되지 않음: {:?}",
+                post
+            );
+        }
+    }
+
+    /// SharedSecret 의 Drop 으로 내부 32바이트가 0 으로 소거되는지 검증.
+    #[test]
+    fn test_shared_secret_zeroize_on_drop() {
+        let alice_secret = SecretKey::from_bytes([0x11; 32]);
+        let bob_secret = SecretKey::from_bytes([0x22; 32]);
+        let bob_pk = bob_secret.public_key();
+
+        let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(alice_secret.diffie_hellman(&bob_pk));
+            let ptr = storage.assume_init_ref().as_bytes().as_ptr();
+
+            let pre = core::slice::from_raw_parts(ptr, 32);
+            let nonzero = pre.iter().any(|&b| b != 0);
+            assert!(nonzero, "공유 비밀이 비어 있음 — 테스트 전제 위반");
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, 32);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "SharedSecret 메모리가 Drop 후 소거되지 않음: {:?}",
+                post
+            );
+        }
+    }
+
+    /// FieldElement::zeroize 가 5개 limb 를 모두 0 으로 만드는지 검증.
+    #[test]
+    fn test_field_element_zeroize() {
+        let mut fe = FieldElement::from_bytes(&[0xCD; 32]);
+        let any_nonzero_before = fe.0.iter().any(|&w| w != 0);
+        assert!(any_nonzero_before, "FieldElement 가 비어 있음");
+
+        fe.zeroize();
+
+        for (i, w) in fe.0.iter().enumerate() {
+            assert_eq!(*w, 0, "FieldElement.0[{}] 미소거: {:#x}", i, w);
+        }
+    }
+
+    /// from_bytes 입력 버퍼는 Copy 이므로 SecretKey 내부 위치와 별개임을 확인 후
+    /// SecretKey Drop 만으로 SecretKey 가 보유한 사본이 소거되는지 재차 확인.
+    #[test]
+    fn test_secret_key_drop_does_not_touch_input() {
+        let input = [0x55u8; 32];
+        let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(SecretKey::from_bytes(input));
+            let internal_ptr = storage.assume_init_ref().as_bytes().as_ptr();
+            assert_ne!(
+                internal_ptr,
+                input.as_ptr(),
+                "SecretKey 가 입력 버퍼를 공유하면 안 됨"
+            );
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(internal_ptr, 32);
+            assert!(post.iter().all(|&b| b == 0), "내부 사본 미소거");
+        }
+        // 입력 버퍼는 호출자 책임이므로 변경되지 않아야 함
+        assert!(input.iter().all(|&b| b == 0x55), "입력 버퍼가 변경됨");
+    }
 
     #[test]
     fn test_rfc7748_vector_1() {
