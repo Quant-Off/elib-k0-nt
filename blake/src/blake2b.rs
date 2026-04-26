@@ -1,8 +1,7 @@
 //! BLAKE2b 코어 구현 모듈입니다.
 //! RFC 7693 명세를 완전히 준수합니다.
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::{Secret, Zeroize};
 
 use crate::{HashError, SecureBuffer};
 
@@ -33,10 +32,11 @@ const SIGMA: [[usize; 16]; 10] = [
 /// BLAKE2b 상태 구조체입니다.
 ///
 /// # Security Note
-/// Drop 시 내부 체이닝 값과 카운터를 `write_volatile`로 강제 소거합니다.
+/// 체이닝 값(`h`)과 카운터(`t`)는 `Secret`으로 보호되어 Drop 시 자동 소거됩니다.
+/// 버퍼는 `SecureBuffer` 내부에서 동일하게 보호됩니다.
 pub struct Blake2b {
-    h: [u64; 8],
-    t: [u64; 2],
+    h: Secret<[u64; 8]>,
+    t: Secret<[u64; 2]>,
     buf: SecureBuffer,
     buf_len: usize,
     hash_len: usize,
@@ -77,8 +77,8 @@ impl Blake2b {
         let mut h = IV;
         h[0] ^= p0;
         Self {
-            h,
-            t: [0u64; 2],
+            h: Secret::new(h),
+            t: Secret::new([0u64; 2]),
             buf: SecureBuffer::new_owned(128).expect("Blake2b: SecureBuffer alloc failed"),
             buf_len: 0,
             hash_len,
@@ -91,14 +91,13 @@ impl Blake2b {
         loop {
             // 버퍼가 가득 차 있고 추가 데이터가 있을 때만 비-최종 압축
             if self.buf_len == 128 && !input.is_empty() {
-                add_to_counter(&mut self.t, 128);
+                add_to_counter(self.t.expose_mut(), 128);
                 let block = load_block(self.buf.as_slice());
-                compress(&mut self.h, &block, self.t, [0u64, 0u64]);
-                // 버퍼 소거 후 재사용
-                for b in self.buf.as_mut_slice() {
-                    *b = 0;
-                }
+                compress(self.h.expose_mut(), &block, *self.t.expose(), [0u64, 0u64]);
+                // 다음 블록 준비를 위해 버퍼와 임시 메시지 워드 명시적 소거
+                self.buf.zeroize();
                 self.buf_len = 0;
+                drop(block); // [u64;16] block: Secret 으로 자동 소거
             }
             if input.is_empty() {
                 break;
@@ -117,19 +116,24 @@ impl Blake2b {
     /// 내부 상태는 함수 종료 시 Drop을 통해 소거됩니다.
     pub fn finalize(mut self) -> Result<SecureBuffer, HashError> {
         // 남은 바이트 수만큼 카운터 증가
-        add_to_counter(&mut self.t, self.buf_len as u64);
+        add_to_counter(self.t.expose_mut(), self.buf_len as u64);
         // 버퍼 나머지를 0으로 패딩
-        for b in &mut self.buf.as_mut_slice()[self.buf_len..] {
-            *b = 0;
+        for b in self.buf.as_mut_slice()[self.buf_len..].iter_mut() {
+            b.zeroize();
         }
         let block = load_block(self.buf.as_slice());
         // 최종 블록: f[0] = 0xFFFF...
-        compress(&mut self.h, &block, self.t, [0xFFFF_FFFF_FFFF_FFFF, 0u64]);
+        compress(
+            self.h.expose_mut(),
+            &block,
+            *self.t.expose(),
+            [0xFFFF_FFFF_FFFF_FFFF, 0u64],
+        );
 
         let mut out = SecureBuffer::new_owned(self.hash_len)?;
         let out_slice = out.as_mut_slice();
         let mut pos = 0;
-        for word in &self.h {
+        for word in self.h.expose().iter() {
             let bytes = word.to_le_bytes();
             let take = (self.hash_len - pos).min(8);
             out_slice[pos..pos + take].copy_from_slice(&bytes[..take]);
@@ -138,21 +142,18 @@ impl Blake2b {
                 break;
             }
         }
+        // self 와 block 은 스코프 종료 시 각자의 Secret/SecureBuffer Drop 으로 소거
+        drop(block);
         Ok(out)
     }
 }
 
-impl Drop for Blake2b {
-    fn drop(&mut self) {
-        for word in &mut self.h {
-            unsafe { write_volatile(word, 0u64) };
-        }
-        unsafe {
-            write_volatile(&mut self.t[0], 0u64);
-            write_volatile(&mut self.t[1], 0u64);
-            write_volatile(&mut self.buf_len, 0usize);
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for Blake2b {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.h.zeroize();
+        self.t.zeroize();
+        self.buf.zeroize();
     }
 }
 
@@ -172,8 +173,9 @@ fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) 
     v[b] = (v[b] ^ v[c]).rotate_right(63);
 }
 
-fn compress(h: &mut [u64; 8], m: &[u64; 16], t: [u64; 2], f: [u64; 2]) {
-    let mut v = [
+fn compress(h: &mut [u64; 8], m: &Secret<[u64; 16]>, t: [u64; 2], f: [u64; 2]) {
+    let m = m.expose();
+    let mut v: Secret<[u64; 16]> = Secret::new([
         h[0],
         h[1],
         h[2],
@@ -190,37 +192,43 @@ fn compress(h: &mut [u64; 8], m: &[u64; 16], t: [u64; 2], f: [u64; 2]) {
         IV[5] ^ t[1],
         IV[6] ^ f[0],
         IV[7] ^ f[1],
-    ];
+    ]);
     for r in 0..12 {
         let s = &SIGMA[r % 10];
-        g(&mut v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
-        g(&mut v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
-        g(&mut v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
-        g(&mut v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
-        g(&mut v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
-        g(&mut v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
-        g(&mut v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
-        g(&mut v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
+        let v_mut = v.expose_mut();
+        g(v_mut, 0, 4, 8, 12, m[s[0]], m[s[1]]);
+        g(v_mut, 1, 5, 9, 13, m[s[2]], m[s[3]]);
+        g(v_mut, 2, 6, 10, 14, m[s[4]], m[s[5]]);
+        g(v_mut, 3, 7, 11, 15, m[s[6]], m[s[7]]);
+        g(v_mut, 0, 5, 10, 15, m[s[8]], m[s[9]]);
+        g(v_mut, 1, 6, 11, 12, m[s[10]], m[s[11]]);
+        g(v_mut, 2, 7, 8, 13, m[s[12]], m[s[13]]);
+        g(v_mut, 3, 4, 9, 14, m[s[14]], m[s[15]]);
     }
+    let v_ref = v.expose();
     for i in 0..8 {
-        h[i] ^= v[i] ^ v[i + 8];
+        h[i] ^= v_ref[i] ^ v_ref[i + 8];
     }
+    // v 는 함수 종료 시 Secret::Drop 으로 소거됨
 }
 
-fn load_block(bytes: &[u8]) -> [u64; 16] {
-    let mut m = [0u64; 16];
-    for (i, word) in m.iter_mut().enumerate() {
-        let s = i * 8;
-        *word = u64::from_le_bytes([
-            bytes[s],
-            bytes[s + 1],
-            bytes[s + 2],
-            bytes[s + 3],
-            bytes[s + 4],
-            bytes[s + 5],
-            bytes[s + 6],
-            bytes[s + 7],
-        ]);
+fn load_block(bytes: &[u8]) -> Secret<[u64; 16]> {
+    let mut m = Secret::new([0u64; 16]);
+    {
+        let m_mut = m.expose_mut();
+        for (i, word) in m_mut.iter_mut().enumerate() {
+            let s = i * 8;
+            *word = u64::from_le_bytes([
+                bytes[s],
+                bytes[s + 1],
+                bytes[s + 2],
+                bytes[s + 3],
+                bytes[s + 4],
+                bytes[s + 5],
+                bytes[s + 6],
+                bytes[s + 7],
+            ]);
+        }
     }
     m
 }

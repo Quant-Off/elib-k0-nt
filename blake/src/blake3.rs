@@ -1,8 +1,7 @@
 //! BLAKE3 코어 구현 모듈입니다.
 //! BLAKE3 명세(https://github.com/BLAKE3-team/BLAKE3-specs)를 준수합니다.
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::{Secret, Zeroize};
 
 use crate::{HashError, SecureBuffer};
 
@@ -24,12 +23,12 @@ pub const OUT_LEN: usize = 32;
 /// BLAKE3 해시 상태 구조체입니다.
 ///
 /// # Security Note
-/// Drop 시 키워드, CV 스택을 `write_volatile`로 소거합니다.
+/// 키워드와 CV 스택은 `Secret`으로 보호되어 Drop 시 자동 소거됩니다.
 /// 키드 모드(`new_keyed`)는 키를 IV로 변환하므로 키 바이트가 스택에 노출되지 않습니다.
 pub struct Blake3 {
     chunk_state: ChunkState,
-    key_words: [u32; 8],
-    cv_stack: [[u32; 8]; 54],
+    key_words: Secret<[u32; 8]>,
+    cv_stack: Secret<[[u32; 8]; 54]>,
     cv_stack_len: usize,
     flags: u32,
 }
@@ -39,8 +38,8 @@ impl Blake3 {
     pub fn new() -> Self {
         Self {
             chunk_state: ChunkState::new(&IV, 0, 0),
-            key_words: IV,
-            cv_stack: [[0u32; 8]; 54],
+            key_words: Secret::new(IV),
+            cv_stack: Secret::new([[0u32; 8]; 54]),
             cv_stack_len: 0,
             flags: 0,
         }
@@ -54,8 +53,8 @@ impl Blake3 {
         let key_words = words_from_le_bytes_32(key);
         Self {
             chunk_state: ChunkState::new(&key_words, 0, KEYED_HASH),
-            key_words,
-            cv_stack: [[0u32; 8]; 54],
+            key_words: Secret::new(key_words),
+            cv_stack: Secret::new([[0u32; 8]; 54]),
             cv_stack_len: 0,
             flags: KEYED_HASH,
         }
@@ -69,7 +68,8 @@ impl Blake3 {
                 let total_chunks = self.chunk_state.chunk_counter + 1;
                 self.push_cv(chunk_cv);
                 self.merge_cv_stack(total_chunks);
-                self.chunk_state = ChunkState::new(&self.key_words, total_chunks, self.flags);
+                self.chunk_state =
+                    ChunkState::new(self.key_words.expose(), total_chunks, self.flags);
             }
             let take = (CHUNK_LEN - self.chunk_state.len()).min(input.len());
             self.chunk_state.update(&input[..take]);
@@ -91,27 +91,28 @@ impl Blake3 {
         let mut parent_nodes = self.cv_stack_len;
         while parent_nodes > 0 {
             parent_nodes -= 1;
-            let left_cv = self.cv_stack[parent_nodes];
+            let left_cv = self.cv_stack.expose()[parent_nodes];
             output = parent_output(
                 &left_cv,
                 &output.chaining_value(),
-                &self.key_words,
+                self.key_words.expose(),
                 self.flags,
             );
         }
         let mut result = SecureBuffer::new_owned(out_len)?;
         output.root_output_bytes(result.as_mut_slice());
+        // self 와 output 은 스코프 종료 시 각자의 Drop 으로 소거됨
         Ok(result)
     }
 
     fn push_cv(&mut self, cv: [u32; 8]) {
-        self.cv_stack[self.cv_stack_len] = cv;
+        self.cv_stack.expose_mut()[self.cv_stack_len] = cv;
         self.cv_stack_len += 1;
     }
 
     fn pop_cv(&mut self) -> [u32; 8] {
         self.cv_stack_len -= 1;
-        self.cv_stack[self.cv_stack_len]
+        self.cv_stack.expose()[self.cv_stack_len]
     }
 
     fn merge_cv_stack(&mut self, total_chunks: u64) {
@@ -119,7 +120,7 @@ impl Blake3 {
         while self.cv_stack_len > post_merge_len {
             let right = self.pop_cv();
             let left = self.pop_cv();
-            let parent = parent_cv(&left, &right, &self.key_words, self.flags);
+            let parent = parent_cv(&left, &right, self.key_words.expose(), self.flags);
             self.push_cv(parent);
         }
     }
@@ -131,18 +132,12 @@ impl Default for Blake3 {
     }
 }
 
-impl Drop for Blake3 {
-    fn drop(&mut self) {
-        for word in &mut self.key_words {
-            unsafe { write_volatile(word, 0u32) };
-        }
-        for slot in &mut self.cv_stack {
-            for word in slot.iter_mut() {
-                unsafe { write_volatile(word, 0u32) };
-            }
-        }
-        unsafe { write_volatile(&mut self.cv_stack_len, 0usize) };
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for Blake3 {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.key_words.zeroize();
+        self.cv_stack.zeroize();
+        self.chunk_state.zeroize();
     }
 }
 
@@ -151,9 +146,9 @@ impl Drop for Blake3 {
 //
 
 struct ChunkState {
-    chaining_value: [u32; 8],
+    chaining_value: Secret<[u32; 8]>,
     chunk_counter: u64,
-    buf: [u8; BLOCK_LEN],
+    buf: Secret<[u8; BLOCK_LEN]>,
     buf_len: usize,
     blocks_compressed: u8,
     flags: u32,
@@ -162,9 +157,9 @@ struct ChunkState {
 impl ChunkState {
     fn new(key_words: &[u32; 8], chunk_counter: u64, flags: u32) -> Self {
         Self {
-            chaining_value: *key_words,
+            chaining_value: Secret::new(*key_words),
             chunk_counter,
-            buf: [0u8; BLOCK_LEN],
+            buf: Secret::new([0u8; BLOCK_LEN]),
             buf_len: 0,
             blocks_compressed: 0,
             flags,
@@ -186,34 +181,37 @@ impl ChunkState {
     fn update(&mut self, mut input: &[u8]) {
         while !input.is_empty() {
             if self.buf_len == BLOCK_LEN {
-                let block_words = words_from_le_bytes_64(&self.buf);
-                self.chaining_value = first_8_words(compress(
-                    &self.chaining_value,
-                    &block_words,
+                let block_words = words_from_le_bytes_64(self.buf.expose());
+                let new_cv = first_8_words(compress(
+                    self.chaining_value.expose(),
+                    block_words.expose(),
                     self.chunk_counter,
                     BLOCK_LEN as u32,
                     self.flags | self.start_flag(),
                 ));
+                self.chaining_value.expose_mut().copy_from_slice(&new_cv);
                 self.blocks_compressed += 1;
-                self.buf = [0u8; BLOCK_LEN];
+                self.buf.zeroize();
                 self.buf_len = 0;
+                drop(block_words);
             }
             let take = (BLOCK_LEN - self.buf_len).min(input.len());
-            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&input[..take]);
+            self.buf.expose_mut()[self.buf_len..self.buf_len + take]
+                .copy_from_slice(&input[..take]);
             self.buf_len += take;
             input = &input[take..];
         }
     }
 
     fn output(&self) -> Output {
-        let mut block_words = words_from_le_bytes_64(&self.buf);
+        let mut block_words = words_from_le_bytes_64(self.buf.expose());
         // 버퍼 끝 이후 부분은 이미 0이어야 하지만 명시적으로 보장
         let used_words = self.buf_len.div_ceil(4);
-        for w in &mut block_words[used_words..] {
-            *w = 0;
+        for w in block_words.expose_mut()[used_words..].iter_mut() {
+            w.zeroize();
         }
         Output {
-            input_chaining_value: self.chaining_value,
+            input_chaining_value: Secret::new(*self.chaining_value.expose()),
             block_words,
             counter: self.chunk_counter,
             block_len: self.buf_len as u32,
@@ -222,15 +220,11 @@ impl ChunkState {
     }
 }
 
-impl Drop for ChunkState {
-    fn drop(&mut self) {
-        for b in &mut self.buf {
-            unsafe { write_volatile(b, 0u8) };
-        }
-        for w in &mut self.chaining_value {
-            unsafe { write_volatile(w, 0u32) };
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for ChunkState {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.chaining_value.zeroize();
+        self.buf.zeroize();
     }
 }
 
@@ -239,8 +233,8 @@ impl Drop for ChunkState {
 //
 
 struct Output {
-    input_chaining_value: [u32; 8],
-    block_words: [u32; 16],
+    input_chaining_value: Secret<[u32; 8]>,
+    block_words: Secret<[u32; 16]>,
     counter: u64,
     block_len: u32,
     flags: u32,
@@ -249,8 +243,8 @@ struct Output {
 impl Output {
     fn chaining_value(&self) -> [u32; 8] {
         first_8_words(compress(
-            &self.input_chaining_value,
-            &self.block_words,
+            self.input_chaining_value.expose(),
+            self.block_words.expose(),
             self.counter,
             self.block_len,
             self.flags,
@@ -262,13 +256,13 @@ impl Output {
         let mut pos = 0;
         while pos < out.len() {
             let words = compress(
-                &self.input_chaining_value,
-                &self.block_words,
+                self.input_chaining_value.expose(),
+                self.block_words.expose(),
                 counter,
                 self.block_len,
                 self.flags | ROOT,
             );
-            for word in &words {
+            for word in words.expose().iter() {
                 let bytes = word.to_le_bytes();
                 let take = (out.len() - pos).min(4);
                 out[pos..pos + take].copy_from_slice(&bytes[..take]);
@@ -309,8 +303,8 @@ fn round(state: &mut [u32; 16], m: &[u32; 16]) {
     g3(state, 3, 4, 9, 14, m[14], m[15]);
 }
 
-fn compress(cv: &[u32; 8], bw: &[u32; 16], counter: u64, bl: u32, flags: u32) -> [u32; 16] {
-    let mut state = [
+fn compress(cv: &[u32; 8], bw: &[u32; 16], counter: u64, bl: u32, flags: u32) -> Secret<[u32; 16]> {
+    let mut state = Secret::new([
         cv[0],
         cv[1],
         cv[2],
@@ -327,17 +321,19 @@ fn compress(cv: &[u32; 8], bw: &[u32; 16], counter: u64, bl: u32, flags: u32) ->
         (counter >> 32) as u32,
         bl,
         flags,
-    ];
-    let mut m = *bw;
+    ]);
+    let mut m: Secret<[u32; 16]> = Secret::new(*bw);
     for _ in 0..7 {
-        round(&mut state, &m);
-        let permuted: [u32; 16] = core::array::from_fn(|i| m[MSG_PERMUTATION[i]]);
-        m = permuted;
+        round(state.expose_mut(), m.expose());
+        let permuted: [u32; 16] = core::array::from_fn(|i| m.expose()[MSG_PERMUTATION[i]]);
+        m.expose_mut().copy_from_slice(&permuted);
     }
+    let st = state.expose_mut();
     for i in 0..8 {
-        state[i] ^= state[i + 8];
-        state[i + 8] ^= cv[i];
+        st[i] ^= st[i + 8];
+        st[i + 8] ^= cv[i];
     }
+    // m 은 함수 종료 시 Secret::Drop 으로 소거됨
     state
 }
 
@@ -347,11 +343,14 @@ fn parent_output(
     key_words: &[u32; 8],
     flags: u32,
 ) -> Output {
-    let mut block_words = [0u32; 16];
-    block_words[..8].copy_from_slice(left_cv);
-    block_words[8..].copy_from_slice(right_cv);
+    let mut block_words = Secret::new([0u32; 16]);
+    {
+        let bw = block_words.expose_mut();
+        bw[..8].copy_from_slice(left_cv);
+        bw[8..].copy_from_slice(right_cv);
+    }
     Output {
-        input_chaining_value: *key_words,
+        input_chaining_value: Secret::new(*key_words),
         block_words,
         counter: 0,
         block_len: BLOCK_LEN as u32,
@@ -368,15 +367,18 @@ fn parent_cv(
     parent_output(left_cv, right_cv, key_words, flags).chaining_value()
 }
 
-fn first_8_words(x: [u32; 16]) -> [u32; 8] {
-    x[..8].try_into().unwrap()
+fn first_8_words(x: Secret<[u32; 16]>) -> [u32; 8] {
+    let mut out = [0u32; 8];
+    out.copy_from_slice(&x.expose()[..8]);
+    out
+    // x 는 스코프 종료 시 Secret::Drop 으로 소거됨
 }
 
-fn words_from_le_bytes_64(bytes: &[u8; BLOCK_LEN]) -> [u32; 16] {
-    core::array::from_fn(|i| {
+fn words_from_le_bytes_64(bytes: &[u8; BLOCK_LEN]) -> Secret<[u32; 16]> {
+    Secret::new(core::array::from_fn(|i| {
         let s = i * 4;
         u32::from_le_bytes([bytes[s], bytes[s + 1], bytes[s + 2], bytes[s + 3]])
-    })
+    }))
 }
 
 fn words_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {

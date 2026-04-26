@@ -48,8 +48,7 @@
 mod blake2b;
 mod blake3;
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::{Secret, Zeroize};
 
 pub use blake2b::Blake2b;
 pub use blake3::{Blake3, OUT_LEN as BLAKE3_OUT_LEN};
@@ -72,9 +71,9 @@ pub const MAX_OUTPUT_LEN: usize = 1024;
 /// 가변 길이 보안 버퍼입니다.
 ///
 /// no_std 환경에서 힙 할당 없이 고정 크기 배열을 사용합니다.
-/// Drop 시 `write_volatile`로 데이터를 강제 소거합니다.
+/// 내부 데이터는 `Secret`으로 보호되어 Drop 시 전체 영역이 소거됩니다.
 pub struct SecureBuffer {
-    data: [u8; MAX_OUTPUT_LEN],
+    data: Secret<[u8; MAX_OUTPUT_LEN]>,
     len: usize,
 }
 
@@ -89,7 +88,7 @@ impl SecureBuffer {
             return Err(HashError::AllocationFailed);
         }
         Ok(Self {
-            data: [0u8; MAX_OUTPUT_LEN],
+            data: Secret::new([0u8; MAX_OUTPUT_LEN]),
             len,
         })
     }
@@ -107,12 +106,10 @@ impl SecureBuffer {
     }
 }
 
-impl Drop for SecureBuffer {
-    fn drop(&mut self) {
-        for b in &mut self.data[..self.len] {
-            unsafe { write_volatile(b, 0) };
-        }
-        compiler_fence(Ordering::SeqCst);
+impl Zeroize for SecureBuffer {
+    #[inline]
+    fn zeroize(&mut self) {
+        self.data.zeroize();
     }
 }
 
