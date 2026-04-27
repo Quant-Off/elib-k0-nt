@@ -3,8 +3,7 @@
 mod hash_drbg;
 pub mod os_entropy;
 
-use core::ptr::write_volatile;
-use core::sync::atomic::{Ordering, compiler_fence};
+use zeroize::Zeroize;
 
 /// DRBG 연산 중 발생할 수 있는 오류에 대한 열거형입니다.
 ///
@@ -45,14 +44,15 @@ const MAX_SECURE_BUFFER_LEN: usize = 128;
 
 /// 보안 버퍼입니다.
 ///
-/// DRBG 내부 상태(V, C)를 저장하며, Drop 시 `write_volatile`로 소거됩니다.
+/// DRBG 내부 상태(V, C) 또는 OS 엔트로피 시드를 저장합니다.
+/// Drop 또는 명시적 zeroize 호출 시 zeroize 크레이트의 휘발성 쓰기 + 배리어를
+/// 통해 전체 backing storage 가 소거됩니다.
 pub(crate) struct SecureBuffer {
     data: [u8; MAX_SECURE_BUFFER_LEN],
     len: usize,
 }
 
 impl SecureBuffer {
-    /// 지정된 크기의 새 버퍼를 생성합니다.
     #[inline]
     pub fn new_owned(len: usize) -> Result<Self, DrbgError> {
         if len > MAX_SECURE_BUFFER_LEN {
@@ -75,11 +75,83 @@ impl SecureBuffer {
     }
 }
 
+impl Zeroize for SecureBuffer {
+    #[inline]
+    fn zeroize(&mut self) {
+        // 활성 영역만이 아니라 backing storage 전체를 소거하여
+        // 과거 더 큰 len 으로 사용된 적이 있는 잔존 바이트도 함께 제거.
+        self.data.zeroize();
+        self.len.zeroize();
+    }
+}
+
 impl Drop for SecureBuffer {
+    #[inline]
     fn drop(&mut self) {
-        for b in &mut self.data[..self.len] {
-            unsafe { write_volatile(b, 0) };
+        self.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::MaybeUninit;
+
+    /// SecureBuffer Drop 후 backing storage 전체가 0 으로 소거됨을 확인.
+    #[test]
+    fn test_secure_buffer_zeroize_on_drop() {
+        let mut storage: MaybeUninit<SecureBuffer> = MaybeUninit::uninit();
+
+        unsafe {
+            let mut buf = SecureBuffer::new_owned(55).expect("new_owned");
+            // 활성 영역을 인식 가능한 패턴으로 채움
+            for b in buf.as_mut_slice().iter_mut() {
+                *b = 0xA5;
+            }
+            // 활성 영역 외에도 잔존 데이터가 있다고 가정하고 강제 주입
+            // (data 직접 접근은 pub(crate) 이므로 이 test 모듈에서 가능)
+            buf.data[55..].fill(0x5A);
+            buf.len = 55;
+
+            storage.write(buf);
+            let data_ptr = (&raw const (*storage.as_ptr()).data) as *const u8;
+            let len_ptr = &raw const (*storage.as_ptr()).len;
+
+            let pre = core::slice::from_raw_parts(data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(
+                pre[..55].iter().all(|&b| b == 0xA5),
+                "활성 영역 패턴 미반영"
+            );
+            assert!(
+                pre[55..].iter().all(|&b| b == 0x5A),
+                "비활성 영역 패턴 미반영"
+            );
+            assert_eq!(core::ptr::read(len_ptr), 55);
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "SecureBuffer data 미소거: {:?}",
+                post
+            );
+            assert_eq!(core::ptr::read(len_ptr), 0, "SecureBuffer len 미소거");
         }
-        compiler_fence(Ordering::SeqCst);
+    }
+
+    /// SecureBuffer::zeroize 명시 호출이 backing storage 전체를 소거함을 확인.
+    #[test]
+    fn test_secure_buffer_explicit_zeroize() {
+        let mut buf = SecureBuffer::new_owned(64).expect("new_owned");
+        for b in buf.as_mut_slice().iter_mut() {
+            *b = 0xFF;
+        }
+        buf.data[64..].fill(0xEE);
+
+        buf.zeroize();
+
+        assert!(buf.data.iter().all(|&b| b == 0), "zeroize 후 data 미소거");
+        assert_eq!(buf.len, 0, "zeroize 후 len 미소거");
     }
 }
