@@ -41,15 +41,15 @@
 //! # Security Note
 //! - `impl_hash_drbg!` 매크로를 사용하여 각 해시 함수에 대한 DRBG 구조체와 구현을 생성합니다. 이는 코드 중복을 최소화하고 일관성을 유지합니다.
 //! - 내부 상태 덧셈 연산(`add_mod`, `add_u64_mod`)은 Big-endian 모듈러 덧셈으로 구현되어 표준을 정확히 따릅니다.
-//! - 중간 계산값이나 스택에 복사된 민감한 데이터는 `write_volatile`을 사용하여 명시적으로 소거합니다.
+//! - 중간 계산값이나 스택에 복사된 민감한 데이터는 [`zeroize::Secret`] 으로 감싸 모든 종료 경로(정상/`?`/패닉) 에서 휘발성 쓰기 + 컴파일러·메모리 배리어로 자동 소거합니다.
 //!
 //! # Authors
 //! Q. T. Felix
 
 use crate::{DrbgError, SecureBuffer};
 use core::cmp::min;
-use core::ptr::write_volatile;
 use sha2::{SHA2, SHA224, SHA256, SHA384, SHA512};
+use zeroize::{Secret, Zeroize};
 
 /// 최대 reseed 간격
 const RESEED_INTERVAL: u64 = 1 << 48;
@@ -199,21 +199,21 @@ macro_rules! impl_hash_drbg {
             ///   비밀 상태 V의 **값**에 무관
             /// - 내부 상태 `V`의 복사본 `data`는 값에 무관한 순차 증가(`add_u64_mod`)만 수행
             /// - 해시 입력 크기 고정 -> 해시 연산 자체의 타이밍은 V 값에 무관
-            /// - 스택 복사본 `data`는 함수 종료 시 `write_volatile`로 소거 (메모리 잔존 방지)
+            /// - 스택 복사본 `data` 는 [`Secret`] 으로 감싸 Drop 시점에 휘발성 쓰기 + 배리어로 소거
             ///
             /// **CT 위협 모델**: Hashgen의 출력은 공개(반환값)이므로 출력 자체의 CT 보호는
             /// 불필요합니다. 보호 대상은 내부 상태 V이며, V는 외부에 직접 노출되지 않습니다.
             fn hashgen(&self, requested_bytes: usize, output: &mut [u8]) -> Result<(), DrbgError> {
-                // data = V (스택 복사 — Drop 후 write_volatile로 소거)
-                let mut data = [0u8; $seedlen];
-                data.copy_from_slice(self.v.as_slice());
+                // data = V — Secret 으로 보호되어 모든 종료 경로에서 자동 소거
+                let mut data = Secret::new([0u8; $seedlen]);
+                data.expose_mut().copy_from_slice(self.v.as_slice());
 
                 let m = requested_bytes.div_ceil($outlen);
                 let mut written = 0usize;
 
                 for _ in 0..m {
                     let mut hasher = <$hasher_type>::new();
-                    hasher.update(&data);
+                    hasher.update(data.expose());
                     let hash = hasher.finalize();
                     let hash_bytes = hash.as_bytes();
 
@@ -222,14 +222,7 @@ macro_rules! impl_hash_drbg {
                     written += copy_len;
 
                     // data = (data + 1) mod 2^seedlen (NIST 명세)
-                    Self::add_u64_mod(&mut data, 1);
-                }
-
-                // data(= V 파생본) 강제 소거
-                for byte in &mut data {
-                    unsafe {
-                        write_volatile(byte, 0);
-                    }
+                    Self::add_u64_mod(data.expose_mut(), 1);
                 }
 
                 Ok(())
@@ -388,33 +381,23 @@ macro_rules! impl_hash_drbg {
                 }
 
                 // new_V = Hash_df(0x01 || V || entropy_input || additional_input, seedlen)
-                // 스택 버퍼에 먼저 계산 후 SecureBuffer에 복사
-                let mut new_v = [0u8; $seedlen];
+                // Secret 으로 감싸 ? 조기 반환 시에도 부분 결과가 메모리에 남지 않도록 함.
+                let mut new_v = Secret::new([0u8; $seedlen]);
                 Self::hash_df(
                     &[&[0x01u8], self.v.as_slice(), entropy_input, ai],
                     $seedlen,
-                    &mut new_v,
+                    new_v.expose_mut(),
                 )?;
-                self.v.as_mut_slice().copy_from_slice(&new_v);
-
-                // new_v 스택 버퍼 강제 소거
-                for byte in &mut new_v {
-                    unsafe {
-                        write_volatile(byte, 0);
-                    }
-                }
+                self.v.as_mut_slice().copy_from_slice(new_v.expose());
 
                 // new_C = Hash_df(0x00 || new_V, seedlen)
-                // self.c를 직접 출력 버퍼로 사용 (self.v 불변 대여 -> 가변 대여 순서 주의)
-                let mut new_c = [0u8; $seedlen];
-                Self::hash_df(&[&[0x00u8], self.v.as_slice()], $seedlen, &mut new_c)?;
-                self.c.as_mut_slice().copy_from_slice(&new_c);
-
-                for byte in &mut new_c {
-                    unsafe {
-                        write_volatile(byte, 0);
-                    }
-                }
+                let mut new_c = Secret::new([0u8; $seedlen]);
+                Self::hash_df(
+                    &[&[0x00u8], self.v.as_slice()],
+                    $seedlen,
+                    new_c.expose_mut(),
+                )?;
+                self.c.as_mut_slice().copy_from_slice(new_c.expose());
 
                 self.reseed_counter = 1;
                 Ok(())
@@ -454,16 +437,10 @@ macro_rules! impl_hash_drbg {
                         let w = hasher.finalize();
 
                         // w(outlen bytes)를 seedlen bytes로 오른쪽 정렬 (big-endian MSB=0 패딩)
-                        // V = (V + w) mod 2^seedlen
-                        let mut w_padded = [0u8; $seedlen];
-                        w_padded[$seedlen - $outlen..].copy_from_slice(w.as_bytes());
-                        Self::add_mod(self.v.as_mut_slice(), &w_padded);
-
-                        for byte in &mut w_padded {
-                            unsafe {
-                                write_volatile(byte, 0);
-                            }
-                        }
+                        // V = (V + w) mod 2^seedlen — Secret 으로 자동 소거
+                        let mut w_padded = Secret::new([0u8; $seedlen]);
+                        w_padded.expose_mut()[$seedlen - $outlen..].copy_from_slice(w.as_bytes());
+                        Self::add_mod(self.v.as_mut_slice(), w_padded.expose());
                     }
                 }
 
@@ -478,26 +455,14 @@ macro_rules! impl_hash_drbg {
 
                 // V = (V + H + C + reseed_counter) mod 2^seedlen
                 // H(outlen bytes)를 seedlen bytes로 오른쪽 정렬 후 덧셈
-                let mut h_padded = [0u8; $seedlen];
-                h_padded[$seedlen - $outlen..].copy_from_slice(h.as_bytes());
-                Self::add_mod(self.v.as_mut_slice(), &h_padded);
-
-                for byte in &mut h_padded {
-                    unsafe {
-                        write_volatile(byte, 0);
-                    }
-                }
+                let mut h_padded = Secret::new([0u8; $seedlen]);
+                h_padded.expose_mut()[$seedlen - $outlen..].copy_from_slice(h.as_bytes());
+                Self::add_mod(self.v.as_mut_slice(), h_padded.expose());
 
                 // C를 스택에 복사 후 V에 덧셈 (self.v와 self.c 동시 대여 회피)
-                let mut c_copy = [0u8; $seedlen];
-                c_copy.copy_from_slice(self.c.as_slice());
-                Self::add_mod(self.v.as_mut_slice(), &c_copy);
-
-                for byte in &mut c_copy {
-                    unsafe {
-                        write_volatile(byte, 0);
-                    }
-                }
+                let mut c_copy = Secret::new([0u8; $seedlen]);
+                c_copy.expose_mut().copy_from_slice(self.c.as_slice());
+                Self::add_mod(self.v.as_mut_slice(), c_copy.expose());
 
                 // reseed_counter를 V에 덧셈
                 Self::add_u64_mod(self.v.as_mut_slice(), self.reseed_counter);
@@ -509,12 +474,12 @@ macro_rules! impl_hash_drbg {
 
         /// 메모리 잔존 공격 방지: reseed_counter 강제 소거
         ///
-        /// SecureBuffer(V, C)는 자체 Drop에서 자동 소거됩니다.
+        /// SecureBuffer(V, C)는 자체 Drop 에서 자동 소거됩니다.
+        /// 본 Drop 본문 종료 후 필드 Drop 이 선언 순서대로 실행되어 V, C 가 소거됩니다.
         impl Drop for $struct_name {
+            #[inline]
             fn drop(&mut self) {
-                unsafe {
-                    write_volatile(&mut self.reseed_counter, 0u64);
-                }
+                self.reseed_counter.zeroize();
             }
         }
     };
@@ -526,3 +491,152 @@ impl_hash_drbg!(HashDRBGSHA224, SHA224, 28, 55, 14); // security_strength=112 bi
 impl_hash_drbg!(HashDRBGSHA256, SHA256, 32, 55, 16); // security_strength=128 bits
 impl_hash_drbg!(HashDRBGSHA384, SHA384, 48, 111, 24); // security_strength=192 bits
 impl_hash_drbg!(HashDRBGSHA512, SHA512, 64, 111, 32); // security_strength=256 bits !Recommended!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MAX_SECURE_BUFFER_LEN;
+    use core::mem::MaybeUninit;
+
+    /// SHA-256 기반 Hash_DRBG 의 Drop 후 V, C, reseed_counter 가 모두 0 으로 소거됨을 확인.
+    #[test]
+    fn test_hash_drbg_sha256_zeroize_on_drop() {
+        let entropy = [0xAAu8; 32];
+        let nonce = [0x55u8; 16];
+
+        let mut storage: MaybeUninit<HashDRBGSHA256> = MaybeUninit::uninit();
+
+        unsafe {
+            let drbg =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            storage.write(drbg);
+
+            let v_data_ptr = (&raw const (*storage.as_ptr()).v.data) as *const u8;
+            let c_data_ptr = (&raw const (*storage.as_ptr()).c.data) as *const u8;
+            let counter_ptr = &raw const (*storage.as_ptr()).reseed_counter;
+
+            // 사전 검증: V, C 활성 영역 (seedlen=55B) 에 instantiate 결과가 채워져 있어야 함
+            let pre_v = core::slice::from_raw_parts(v_data_ptr, MAX_SECURE_BUFFER_LEN);
+            let pre_c = core::slice::from_raw_parts(c_data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(
+                pre_v[..55].iter().any(|&b| b != 0),
+                "V 활성 영역이 비어있음 (instantiate 실패?)"
+            );
+            assert!(
+                pre_c[..55].iter().any(|&b| b != 0),
+                "C 활성 영역이 비어있음 (instantiate 실패?)"
+            );
+            assert_eq!(core::ptr::read(counter_ptr), 1u64);
+
+            storage.assume_init_drop();
+
+            let post_v = core::slice::from_raw_parts(v_data_ptr, MAX_SECURE_BUFFER_LEN);
+            let post_c = core::slice::from_raw_parts(c_data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(
+                post_v.iter().all(|&b| b == 0),
+                "DRBG V 미소거: {:?}",
+                post_v
+            );
+            assert!(
+                post_c.iter().all(|&b| b == 0),
+                "DRBG C 미소거: {:?}",
+                post_c
+            );
+            assert_eq!(
+                core::ptr::read(counter_ptr),
+                0u64,
+                "DRBG reseed_counter 미소거"
+            );
+        }
+    }
+
+    /// SHA-512 기반 (seedlen=111B) Hash_DRBG 도 동일하게 소거됨을 확인.
+    #[test]
+    fn test_hash_drbg_sha512_zeroize_on_drop() {
+        let entropy = [0xBBu8; 64];
+        let nonce = [0x44u8; 32];
+
+        let mut storage: MaybeUninit<HashDRBGSHA512> = MaybeUninit::uninit();
+
+        unsafe {
+            let drbg =
+                HashDRBGSHA512::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            storage.write(drbg);
+
+            let v_data_ptr = (&raw const (*storage.as_ptr()).v.data) as *const u8;
+            let c_data_ptr = (&raw const (*storage.as_ptr()).c.data) as *const u8;
+            let counter_ptr = &raw const (*storage.as_ptr()).reseed_counter;
+
+            let pre_v = core::slice::from_raw_parts(v_data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(pre_v[..111].iter().any(|&b| b != 0), "V 활성 영역 미반영");
+
+            storage.assume_init_drop();
+
+            let post_v = core::slice::from_raw_parts(v_data_ptr, MAX_SECURE_BUFFER_LEN);
+            let post_c = core::slice::from_raw_parts(c_data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(post_v.iter().all(|&b| b == 0), "SHA512 DRBG V 미소거");
+            assert!(post_c.iter().all(|&b| b == 0), "SHA512 DRBG C 미소거");
+            assert_eq!(core::ptr::read(counter_ptr), 0u64, "counter 미소거");
+        }
+    }
+
+    /// generate / reseed 후에도 Drop 시점에 내부 상태가 0 으로 소거되는지 확인.
+    #[test]
+    fn test_hash_drbg_after_generate_reseed_zeroize() {
+        let entropy = [0xCCu8; 32];
+        let nonce = [0x33u8; 16];
+
+        let mut storage: MaybeUninit<HashDRBGSHA256> = MaybeUninit::uninit();
+
+        unsafe {
+            let mut drbg =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+
+            let mut out = [0u8; 64];
+            drbg.generate(&mut out, Some(b"ai-1")).expect("generate-1");
+            assert!(out.iter().any(|&b| b != 0), "generate 출력이 0 임");
+
+            let new_entropy = [0x77u8; 32];
+            drbg.reseed(&new_entropy, Some(b"ai-2")).expect("reseed");
+
+            drbg.generate(&mut out, None).expect("generate-2");
+
+            storage.write(drbg);
+
+            let v_data_ptr = (&raw const (*storage.as_ptr()).v.data) as *const u8;
+            let c_data_ptr = (&raw const (*storage.as_ptr()).c.data) as *const u8;
+            let counter_ptr = &raw const (*storage.as_ptr()).reseed_counter;
+
+            // reseed 로 counter=1 리셋 후 generate-2 로 +1 → 2
+            assert_eq!(core::ptr::read(counter_ptr), 2u64, "counter 추적 실패");
+
+            storage.assume_init_drop();
+
+            let post_v = core::slice::from_raw_parts(v_data_ptr, MAX_SECURE_BUFFER_LEN);
+            let post_c = core::slice::from_raw_parts(c_data_ptr, MAX_SECURE_BUFFER_LEN);
+            assert!(post_v.iter().all(|&b| b == 0), "Drop 후 V 미소거");
+            assert!(post_c.iter().all(|&b| b == 0), "Drop 후 C 미소거");
+            assert_eq!(core::ptr::read(counter_ptr), 0u64, "Drop 후 counter 미소거");
+        }
+    }
+
+    /// 같은 엔트로피·nonce 입력 시 결정론적 출력을 검증 (회귀 방지용).
+    #[test]
+    fn test_hash_drbg_deterministic_output() {
+        let entropy = [0x11u8; 32];
+        let nonce = [0x22u8; 16];
+
+        unsafe {
+            let mut a =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-a");
+            let mut b =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-b");
+
+            let mut out_a = [0u8; 128];
+            let mut out_b = [0u8; 128];
+            a.generate(&mut out_a, None).expect("generate-a");
+            b.generate(&mut out_b, None).expect("generate-b");
+            assert_eq!(out_a, out_b, "결정론적 출력 검증 실패");
+        }
+    }
+}
