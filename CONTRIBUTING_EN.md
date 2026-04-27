@@ -1,6 +1,6 @@
 # Contributing
 
-[![Language](https://img.shields.io/badge/CONTRIBUTION-Korean_Ver-blue?style=for-the-badge)](CONTRIBUTION.md)
+[![Language](https://img.shields.io/badge/CONTRIBUTING-Korean_Ver-blue?style=for-the-badge)](CONTRIBUTING.md)
 
 *First and foremost, we would like to express our gratitude to all contributors. Your contributions are a tremendous help to us.*
 

@@ -1,6 +1,6 @@
 # 기여
 
-[![Language](https://img.shields.io/badge/CONTRIBUTION-English_Ver-blue?style=for-the-badge)](CONTRIBUTION_EN.md)
+[![Language](https://img.shields.io/badge/CONTRIBUTING-English_Ver-blue?style=for-the-badge)](CONTRIBUTING_EN.md)
 
 *가장 먼저, 기여해주시는 모든 여러분께 감사 인사를 드립니다. 여러분의 기여는 아주 큰 힘이 됩니다.*
 
