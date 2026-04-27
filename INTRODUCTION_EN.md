@@ -1,5 +1,7 @@
 # Design Goals and Philosophy
 
+[![Language](https://img.shields.io/badge/INTRODUCTION-Korean_Ver-blue?style=for-the-badge)](INTRODUCTION.md)
+
 In this project, we aim for a design that decouples the enhanced [Entlib-Native](https://github.com/Quant-Off/entlib-native) CLI binary into a Microkernel Ring 3 user space service, communicating via IPC. This aligns with the core philosophy of microkernels: privilege separation and fault isolation. Such a design ensures that even if a panic or fault occurs within the cryptographic module, the Ring 0 kernel space / EL1 remains protected. Furthermore, it satisfies the "physical/logical isolation of security functions," a fundamental requirement for high-security standards.
 
 We strictly adhere to the principles of Zero-Trust and Air-Gapped Ready. From a development perspective, we believe that "convenience" must sometimes be sacrificed for "security." When implementing cryptographic algorithms, one might provide convenient tools through a middle ground (e.g., core dependencies named `core` or `base`). Implementing highly redundant `traits` by pulling them from such a core crate is a typical example of this. While this approach is excellent and often recommended, we view it as a somewhat aggressive programming style when considering compliance requirements or the critical principles each individual unit crate must uphold. We simply refer to this as "convenience." We choose to discard this convenience, designing each crate to be implemented independently.
@@ -12,7 +14,7 @@ Nevertheless, if you still think our design approach looks truly stupid... we ha
 
 # Features Included
 
-This binary is equipped with memory-zeroing capabilities that fully cover multiple architectural platforms. Within almost all cryptographic (or information security) functions, logic and volatile operations are included to immediately erase sensitive data as soon as it leaves its scope. This functionality is provided by our internal `zeroize` implementation.
+This binary is equipped with memory-zeroing capabilities that fully cover multiple architectural platforms. Within almost all cryptographic (or information security) functions, logic and volatile operations are included to immediately erase sensitive data as soon as it leaves its scope. This functionality is provided by our internal `zeroize` implementation. You can find several mechanisms regarding erasure [here](zeroize/README.md).
 
 Based on robust zeroing logic, we provide the following cryptographic features:
 
