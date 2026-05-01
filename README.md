@@ -13,20 +13,6 @@
 
 여러분은 언제나 프로젝트를 소개한 문서인 [INTRODUCTION.md](INTRODUCTION.md) 파일을 참고할 수 있습니다!
 
-# `1.0.0` 릴리즈
-
-이 릴리즈에는 다음 기능이 구현되어있습니다.
-
-- [Constant-time Ops](./constant-time)
-- Hash([SHA2](./sha2), [SHA3](./sha3), [SHAKE](./sha3), [BLAKE2](./blake))
-- RNG([Hash DRBG](./rng))
-- Digital Signature([Ed25519](./ed25519), [Ed448](./ed448))
-- Key Establishment Protocol([X25519](./x25519), [X448](./x448))
-- AEAD, BlockCipher([AES](./aes), [ChaCha20-Poly1305](./chacha20))
-- Post-Quantum Cryptography([ML-DSA](./mldsa), [ML-KEM](./mlkem))
-
-이 릴리즈에서는 우선 암호 기능을 구현하고 정상적으로 작동하는지 테스트를 거치는 것을 목표로 했습니다. 커널과 정상적인 상호 작용을 수행하는지에 대한 상세 기능 구현 및 테스트는 다음 알파 버전으로 공개하겠습니다.
-
 # 라이선스
 
 이 프로젝트는 [MIT LICENSE](LICENSE)하에 있습니다.
