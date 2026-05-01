@@ -1,5 +1,7 @@
 # This Project
 
+[![Language](https://img.shields.io/badge/INTRODUCTION-Korean_Ver-blue?style=for-the-badge)](INTRODUCTION.md)
+
 The previously developed cryptographic module, [Entlib-Native](https://github.com/Quant-Off/entlib-native), had ambiguous architecture targeting, contained unimplemented systems within certain cryptographic algorithms, lacked sufficient preparation for HSM hardware connectivity, and provided an FFI (Foreign Function Interface) to accommodate Java integration. For example, AES-256-GCM did not support SHA-NI/AES-NI, and since it was invoked from the Java side via the FFM (Foreign Function & Memory) API, the caller and callee were separated — resulting in differentiated memory allocators for the data.
 
 Ultimately, the Java-based closed-infrastructure management application found a degree of convenience in its communication implementation, but several security constraints remained unsettling. Java's platform independence makes it an excellent choice in general-purpose environments, but the JVM (Java Virtual Machine) runtime itself is ill-suited for high-security microkernel environments. Most critically, the JVM's Garbage Collector (GC) determines memory deallocation timing on its own, meaning sensitive data such as key material can persist in heap memory even after leaving its scope. This is a clear vulnerability that exposes the system to memory dump attacks, and is difficult to tolerate in high-security environments.
@@ -7,8 +9,6 @@ Ultimately, the Java-based closed-infrastructure management application found a 
 In the end, we decided to sever all ties with Java. Without FFI boundaries, JVM, or the `std` runtime, we designed a dedicated cryptographic module for the Isolation Lightweight Microkernel K0 (ISO-LIGHT-K0) from the ground up in 100% Rust. This module runs as a `no_std`-based Ring 3 user space daemon, communicating with the kernel via IPC. This is `elib-k0-nt`.
 
 # Design Goals and Philosophy
-
-[![Language](https://img.shields.io/badge/INTRODUCTION-Korean_Ver-blue?style=for-the-badge)](INTRODUCTION.md)
 
 In this project, we aim for a design that decouples the enhanced [Entlib-Native](https://github.com/Quant-Off/entlib-native) CLI binary into a Microkernel Ring 3 user space service, communicating via IPC. This aligns with the core philosophy of microkernels: privilege separation and fault isolation. Such a design ensures that even if a panic or fault occurs within the cryptographic module, the Ring 0 kernel space / EL1 remains protected. Furthermore, it satisfies the "physical/logical isolation of security functions," a fundamental requirement for high-security standards.
 

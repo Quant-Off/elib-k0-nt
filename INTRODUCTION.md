@@ -1,5 +1,7 @@
 # 이 프로젝트
 
+[![Language](https://img.shields.io/badge/INTRODUCTION-English_Ver-blue?style=for-the-badge)](INTRODUCTION_EN.md)
+
 이전에 개발된 암호모듈 [얽힘 라이브러리 네이티브](https://github.com/Quant-Off/entlib-native)는 아키텍처 타겟팅이 모호했고, 각 암호 알고리즘 내에서 구현되지 않은 시스템이 있었었으며, HSM 하드웨어 연결 가능성에 대한 대비책이 적었고 Java와 연결을 고려하여 FFI(Foreign Function Interface)를 제공했습니다. 예를 들어, AES-256-GCM은 SHA-NI/AES-NI을 지원하지 않고, Java 측에서 FFM(Foreign Function & Memory) API를 통해 호출되는 방식이므로 호출자와 피호출자를 나눠 데이터에 대한 메모리 할당자를 차별했습니다.
 
 궁극적으로 Java 기반의 폐쇄형 인프라 관리 애플리케이션은 통신 구현에 있어 약간의 편리함을 느꼈지만, 몇 가지 보안에 관한 제약은 찝찝한 상태였습니다. Java는 플랫폼 독립성이 막강하여 범용 환경에서는 더할 나위 없이 훌륭한 선택지이지만, JVM(Java Virtual Machine) 런타임 자체가 고보안 마이크로커널 환경에는 어울리지 않습니다. 결정적으로, JVM의 가비지 컬렉터(Garbage Collector, GC)는 메모리 해제 시점을 자체적으로 결정하기 때문에 키 물질(key material)과 같은 민감한 데이터가 스코프를 벗어난 이후에도 힙 메모리에 잔류할 수 있습니다. 이는 메모리 덤프(memory dump) 공격에 고스란히 노출되는 결함이며, 고보안 환경에서는 용납되기 어렵습니다.
@@ -7,8 +9,6 @@
 결국 Java와의 연결 고리를 완전히 끊기로 했습니다. FFI 바운더리도, JVM도, `std` 런타임도 없이, 격리형 초경량 마이크로커널 K0(Isolation Lightweight Microkernel K0, ISO-LIGHT-K0)를 위한 전용 암호 모듈을 100% Rust로 새롭게 설계했습니다. 이 모듈은 `no_std` 기반의 Ring 3 사용자 공간 데몬(daemon)으로 구동되며, IPC를 통해 커널과 통신합니다. 이것이 `elib-k0-nt`입니다.
 
 # 설계 지향점 및 철학
-
-[![Language](https://img.shields.io/badge/INTRODUCTION-English_Ver-blue?style=for-the-badge)](INTRODUCTION_EN.md)
 
 이 프로젝트에서 저희는 개량된 [얽힘 라이브러리 네이티브](https://github.com/Quant-Off/entlib-native) CLI 바이너리를 마이크로커널의 Ring 3 사용자 공간(user space) 서비스로 분리하고 IPC로 통신하는 설계를 지향합니다. 이는 마이크로커널의 핵심 철학(권한 분리와 장애 격리)에 부합하기 때문입니다. 이러한 설계는 암호화 모듈에서 패닉이나 결함이 발생하더라도 Ring 0 커널 공간(kernel space) / EL1 은 안전하게 보호되며, 높은 보안 등급의 기본 요건(규격)인 '보안 기능의 물리적/논리적 격리'를 충족할 수 있습니다.
 
