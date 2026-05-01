@@ -1,6 +1,6 @@
 #![allow(clippy::needless_range_loop)]
 
-use crate::sbox::{inv_sub_byte, sub_byte};
+use crate::sbox::{inv_sub_bytes_block, sub_bytes_block};
 
 const NB: usize = 4;
 const NR: usize = 14;
@@ -29,20 +29,37 @@ pub fn state_to_block(state: &State) -> [u8; 16] {
     block
 }
 
+// SubBytes 는 셀 위치에 의존 안해서 행렬 -> 16 바이트 -> BP 회로 -> 16 바이트
+// -> 행렬 순서로 우회됌. 비트슬라이스 변환/복원 비용은 라운드 1회 약 60게이트
+// 수준으로, 셀별 256회 스캔(이전) 보다 압도적으로 작다!
 #[inline]
 fn sub_bytes(state: &mut State) {
-    for row in state.iter_mut() {
-        for cell in row.iter_mut() {
-            *cell = sub_byte(*cell);
+    let mut bytes = [0u8; 16];
+    for r in 0..4 {
+        for c in 0..4 {
+            bytes[r * 4 + c] = state[r][c];
+        }
+    }
+    sub_bytes_block(&mut bytes);
+    for r in 0..4 {
+        for c in 0..4 {
+            state[r][c] = bytes[r * 4 + c];
         }
     }
 }
 
 #[inline]
 fn inv_sub_bytes(state: &mut State) {
-    for row in state.iter_mut() {
-        for cell in row.iter_mut() {
-            *cell = inv_sub_byte(*cell);
+    let mut bytes = [0u8; 16];
+    for r in 0..4 {
+        for c in 0..4 {
+            bytes[r * 4 + c] = state[r][c];
+        }
+    }
+    inv_sub_bytes_block(&mut bytes);
+    for r in 0..4 {
+        for c in 0..4 {
+            state[r][c] = bytes[r * 4 + c];
         }
     }
 }
