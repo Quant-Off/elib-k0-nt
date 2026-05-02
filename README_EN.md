@@ -1,6 +1,7 @@
 # None-Triple EntanglementLib Crypto Module
 
 [![Language](https://img.shields.io/badge/README-Korean_Ver-blue?style=for-the-badge)](README.md)
+[![Qu4nt-Space-Discord](https://img.shields.io/badge/Qu4nt_Space-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://github.com/Quant-Off/)
 
 The [Rust-based Entanglement Library native project](https.github.com/Quant-Off/entlib-native) supports `std` (and `no_std`) for the most widely used architectures and focuses on complying with high-security standards (such as international regulations). This module is reasonable in that regard.
 

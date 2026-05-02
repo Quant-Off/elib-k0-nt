@@ -1,6 +1,7 @@
 # None-Triple EntanglementLib Crypto Module
 
 [![Language](https://img.shields.io/badge/README-English_Ver-blue?style=for-the-badge)](README_EN.md)
+[![Qu4nt-Space-Discord](https://img.shields.io/badge/Qu4nt_Space-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://github.com/Quant-Off/)
 
 [Rust 기반 얽힘 라이브러리 네이티브 프로젝트](https://github.com/Quant-Off/entlib-native)는 가장 많이 사용되는 아키텍처에 대해 `std`(및 `no_std`)를 지원하며, 고보안 규격(국제적 규제 등 컴플라이언스)을 준수하는 데 초점을 맞춥니다. 이 모듈은 그런 부분에서 합리적입니다.
 
