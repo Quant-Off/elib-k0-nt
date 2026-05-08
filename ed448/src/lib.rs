@@ -350,7 +350,7 @@ mod tests {
         let mut h1 = SHAKE256::new();
         h1.update(&dom[..dom_len]);
         h1.update(&[]);
-        h1.update(&expanded.nonce);
+        h1.update(expanded.nonce.expose());
         h1.update(message);
         let mut r_hash = [0u8; 114];
         h1.finalize_into(&mut r_hash);

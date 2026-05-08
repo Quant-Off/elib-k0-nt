@@ -91,13 +91,10 @@ impl Blake3 {
         let mut parent_nodes = self.cv_stack_len;
         while parent_nodes > 0 {
             parent_nodes -= 1;
-            let left_cv = self.cv_stack.expose()[parent_nodes];
-            output = parent_output(
-                &left_cv,
-                &output.chaining_value(),
-                self.key_words.expose(),
-                self.flags,
-            );
+            let left_cv: Secret<[u32; 8]> = Secret::new(self.cv_stack.expose()[parent_nodes]);
+            let right_cv: Secret<[u32; 8]> = output.chaining_value();
+            output = parent_output(&left_cv, &right_cv, self.key_words.expose(), self.flags);
+            // left_cv, right_cv Drop at iteration end → volatile-zero
         }
         let mut result = SecureBuffer::new_owned(out_len)?;
         output.root_output_bytes(result.as_mut_slice());
@@ -105,23 +102,25 @@ impl Blake3 {
         Ok(result)
     }
 
-    fn push_cv(&mut self, cv: [u32; 8]) {
-        self.cv_stack.expose_mut()[self.cv_stack_len] = cv;
+    fn push_cv(&mut self, cv: Secret<[u32; 8]>) {
+        self.cv_stack.expose_mut()[self.cv_stack_len] = *cv.expose();
         self.cv_stack_len += 1;
+        // cv Drop runs at end of body → volatile-zero of the consumed Secret
     }
 
-    fn pop_cv(&mut self) -> [u32; 8] {
+    fn pop_cv(&mut self) -> Secret<[u32; 8]> {
         self.cv_stack_len -= 1;
-        self.cv_stack.expose()[self.cv_stack_len]
+        Secret::new(self.cv_stack.expose()[self.cv_stack_len])
     }
 
     fn merge_cv_stack(&mut self, total_chunks: u64) {
         let post_merge_len = total_chunks.count_ones() as usize;
         while self.cv_stack_len > post_merge_len {
-            let right = self.pop_cv();
-            let left = self.pop_cv();
+            let right: Secret<[u32; 8]> = self.pop_cv();
+            let left: Secret<[u32; 8]> = self.pop_cv();
             let parent = parent_cv(&left, &right, self.key_words.expose(), self.flags);
             self.push_cv(parent);
+            // left, right Drop here (Secret volatile-zero); push_cv consumed parent.
         }
     }
 }
@@ -138,6 +137,15 @@ impl Zeroize for Blake3 {
         self.key_words.zeroize();
         self.cv_stack.zeroize();
         self.chunk_state.zeroize();
+        self.flags.zeroize();
+        self.cv_stack_len.zeroize();
+    }
+}
+
+impl Drop for Blake3 {
+    #[inline]
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -182,18 +190,21 @@ impl ChunkState {
         while !input.is_empty() {
             if self.buf_len == BLOCK_LEN {
                 let block_words = words_from_le_bytes_64(self.buf.expose());
-                let new_cv = first_8_words(compress(
+                let new_cv: Secret<[u32; 8]> = first_8_words(compress(
                     self.chaining_value.expose(),
                     block_words.expose(),
                     self.chunk_counter,
                     BLOCK_LEN as u32,
                     self.flags | self.start_flag(),
                 ));
-                self.chaining_value.expose_mut().copy_from_slice(&new_cv);
+                self.chaining_value
+                    .expose_mut()
+                    .copy_from_slice(new_cv.expose());
                 self.blocks_compressed += 1;
                 self.buf.zeroize();
                 self.buf_len = 0;
                 drop(block_words);
+                // new_cv Drop here → volatile-zero
             }
             let take = (BLOCK_LEN - self.buf_len).min(input.len());
             self.buf.expose_mut()[self.buf_len..self.buf_len + take]
@@ -225,6 +236,10 @@ impl Zeroize for ChunkState {
     fn zeroize(&mut self) {
         self.chaining_value.zeroize();
         self.buf.zeroize();
+        self.chunk_counter.zeroize();
+        self.buf_len.zeroize();
+        self.blocks_compressed.zeroize();
+        self.flags.zeroize();
     }
 }
 
@@ -241,7 +256,7 @@ struct Output {
 }
 
 impl Output {
-    fn chaining_value(&self) -> [u32; 8] {
+    fn chaining_value(&self) -> Secret<[u32; 8]> {
         first_8_words(compress(
             self.input_chaining_value.expose(),
             self.block_words.expose(),
@@ -325,8 +340,10 @@ fn compress(cv: &[u32; 8], bw: &[u32; 16], counter: u64, bl: u32, flags: u32) ->
     let mut m: Secret<[u32; 16]> = Secret::new(*bw);
     for _ in 0..7 {
         round(state.expose_mut(), m.expose());
-        let permuted: [u32; 16] = core::array::from_fn(|i| m.expose()[MSG_PERMUTATION[i]]);
-        m.expose_mut().copy_from_slice(&permuted);
+        let permuted: Secret<[u32; 16]> =
+            Secret::new(core::array::from_fn(|i| m.expose()[MSG_PERMUTATION[i]]));
+        m.expose_mut().copy_from_slice(permuted.expose());
+        // permuted Drop runs at end of iteration → volatile-zero
     }
     let st = state.expose_mut();
     for i in 0..8 {
@@ -338,16 +355,16 @@ fn compress(cv: &[u32; 8], bw: &[u32; 16], counter: u64, bl: u32, flags: u32) ->
 }
 
 fn parent_output(
-    left_cv: &[u32; 8],
-    right_cv: &[u32; 8],
+    left_cv: &Secret<[u32; 8]>,
+    right_cv: &Secret<[u32; 8]>,
     key_words: &[u32; 8],
     flags: u32,
 ) -> Output {
     let mut block_words = Secret::new([0u32; 16]);
     {
         let bw = block_words.expose_mut();
-        bw[..8].copy_from_slice(left_cv);
-        bw[8..].copy_from_slice(right_cv);
+        bw[..8].copy_from_slice(left_cv.expose());
+        bw[8..].copy_from_slice(right_cv.expose());
     }
     Output {
         input_chaining_value: Secret::new(*key_words),
@@ -359,19 +376,17 @@ fn parent_output(
 }
 
 fn parent_cv(
-    left_cv: &[u32; 8],
-    right_cv: &[u32; 8],
+    left_cv: &Secret<[u32; 8]>,
+    right_cv: &Secret<[u32; 8]>,
     key_words: &[u32; 8],
     flags: u32,
-) -> [u32; 8] {
+) -> Secret<[u32; 8]> {
     parent_output(left_cv, right_cv, key_words, flags).chaining_value()
 }
 
-fn first_8_words(x: Secret<[u32; 16]>) -> [u32; 8] {
-    let mut out = [0u32; 8];
-    out.copy_from_slice(&x.expose()[..8]);
-    out
-    // x 는 스코프 종료 시 Secret::Drop 으로 소거됨
+fn first_8_words(x: Secret<[u32; 16]>) -> Secret<[u32; 8]> {
+    Secret::new(core::array::from_fn(|i| x.expose()[i]))
+    // x 는 함수 종료 시 Secret::Drop 으로 소거됨
 }
 
 fn words_from_le_bytes_64(bytes: &[u8; BLOCK_LEN]) -> Secret<[u32; 16]> {

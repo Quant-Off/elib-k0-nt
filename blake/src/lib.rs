@@ -205,6 +205,7 @@ pub fn blake2b_long(input: &[u8], out_len: usize) -> Result<SecureBuffer, HashEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::MaybeUninit;
 
     // BLAKE2b RFC 7693 테스트 벡터
     #[test]
@@ -262,6 +263,120 @@ mod tests {
         assert_eq!(digest.as_slice(), &expected);
     }
 
+    /// 길이 0 (빈 입력) keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// 단일 블록 root 경로 (compress 1 회, push_cv/pop_cv 미운동) 의 최소 케이스.
+    #[test]
+    fn blake3_keyed_kat_len_0() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let input: [u8; 0] = [];
+        let expected: [u8; 32] = [
+            0x92, 0xb2, 0xb7, 0x56, 0x04, 0xed, 0x3c, 0x76, 0x1f, 0x9d, 0x6f, 0x62, 0x39, 0x2c,
+            0x8a, 0x92, 0x27, 0xad, 0x0e, 0xa3, 0xf0, 0x95, 0x73, 0xe7, 0x83, 0xf1, 0x49, 0x8a,
+            0x4e, 0xd6, 0x0d, 0x26,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
+    /// 길이 1 keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// 단일 블록 root 경로 (block_len = 1, compress 1 회).
+    #[test]
+    fn blake3_keyed_kat_len_1() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let input: [u8; 1] = [0u8]; // (0 % 251) as u8 == 0
+        let expected: [u8; 32] = [
+            0x6d, 0x78, 0x78, 0xdf, 0xff, 0x2f, 0x48, 0x56, 0x35, 0xd3, 0x90, 0x13, 0x27, 0x8a,
+            0xe1, 0x4f, 0x14, 0x54, 0xb8, 0xc0, 0xa3, 0xa2, 0xd3, 0x4b, 0xc1, 0xab, 0x38, 0x22,
+            0x8a, 0x80, 0xc9, 0x5b,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
+    /// 길이 64 keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// ChunkState::update 의 첫 block-boundary compress (L185 first_8_words(compress(...))) 운동.
+    #[test]
+    fn blake3_keyed_kat_len_64() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let mut input = [0u8; 64];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let expected: [u8; 32] = [
+            0xba, 0x8c, 0xed, 0x36, 0xf3, 0x27, 0x70, 0x0d, 0x21, 0x3f, 0x12, 0x0b, 0x1a, 0x20,
+            0x7a, 0x3b, 0x8c, 0x04, 0x33, 0x05, 0x28, 0x58, 0x6f, 0x41, 0x4d, 0x09, 0xf2, 0xf7,
+            0xd9, 0xcc, 0xb7, 0xe6,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
+    /// 길이 1024 keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// 정확히 한 chunk 분량 (CHUNK_LEN = 1024) — chunk-boundary 진입 직전 root 마무리 경로.
+    #[test]
+    fn blake3_keyed_kat_len_1024() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let mut input = [0u8; 1024];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let expected: [u8; 32] = [
+            0x75, 0xc4, 0x6f, 0x6f, 0x3d, 0x9e, 0xb4, 0xf5, 0x5e, 0xca, 0xae, 0xe4, 0x80, 0xdb,
+            0x73, 0x2e, 0x6c, 0x21, 0x05, 0x54, 0x6f, 0x1e, 0x67, 0x50, 0x03, 0x68, 0x7c, 0x31,
+            0x71, 0x9c, 0x7b, 0xa4,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
+    /// 길이 1025 keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// multi-chunk 진입점 — push_cv / pop_cv / parent_cv / merge_cv_stack 가 처음 운동되는 길이.
+    #[test]
+    fn blake3_keyed_kat_len_1025() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let mut input = [0u8; 1025];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let expected: [u8; 32] = [
+            0x35, 0x7d, 0xc5, 0x5d, 0xe0, 0xc7, 0xe3, 0x82, 0xc9, 0x00, 0xfd, 0x6e, 0x32, 0x0a,
+            0xcc, 0x04, 0x14, 0x6b, 0xe0, 0x1d, 0xb6, 0xa8, 0xce, 0x72, 0x10, 0xb7, 0x18, 0x9b,
+            0xd6, 0x64, 0xea, 0x69,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
+    /// 길이 8192 keyed-hash 가 BLAKE3 공식 reference vector 와 byte-identity 인지 검증.
+    /// 8 chunk 이진 머지 — merge_cv_stack 의 ≥ 3 단계 cascade 가 처음 운동되는 길이.
+    #[test]
+    fn blake3_keyed_kat_len_8192() {
+        let key: [u8; 32] = *b"whats the Elvish word for friend";
+        let mut input = [0u8; 8192];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let expected: [u8; 32] = [
+            0xdc, 0x96, 0x37, 0xc8, 0x84, 0x5a, 0x77, 0x0b, 0x4c, 0xbf, 0x76, 0xb8, 0xda, 0xec,
+            0x0e, 0xeb, 0xf7, 0xdc, 0x2e, 0xac, 0x11, 0x49, 0x85, 0x17, 0xf0, 0x8d, 0x44, 0xc8,
+            0xfc, 0x00, 0xd5, 0x8a,
+        ];
+        let mut h = Blake3::new_keyed(&key);
+        h.update(&input);
+        let digest = h.finalize().unwrap();
+        assert_eq!(digest.as_slice(), &expected);
+    }
+
     // blake2b_long 테스트
     #[test]
     fn blake2b_long_80() {
@@ -303,5 +418,68 @@ mod tests {
 
         buf2.as_mut_slice()[3] = 5;
         assert_eq!(CtEqOps::eq(&buf1, &buf2).unwrap_u8(), 0);
+    }
+
+    /// keyed Blake3 인스턴스가 update 후 비-empty 상태에서 Drop 시
+    /// key_words / cv_stack / chunk_state.{chaining_value, buf} / flags / cv_stack_len
+    /// 모두 0 으로 소거되는지 검증.
+    /// 회귀 가드 — 향후 plain [u32; 8] 또는 plain int 필드 재도입 시 본 테스트가 실패해야 함.
+    #[test]
+    fn test_blake3_keyed_zeroize_on_drop() {
+        let key = [0xA5u8; 32];
+        let mut storage: MaybeUninit<Blake3> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(Blake3::new_keyed(&key));
+            // non-empty update — 내부 chaining_value 와 buf 에 비-제로 데이터를 채움
+            (*storage.as_mut_ptr()).update(b"non-empty regression-guard input");
+
+            // Blake3 전체 byte-extent 위에서 raw-pointer 스캔
+            let ptr = storage.as_ptr() as *const u8;
+            let byte_len = core::mem::size_of::<Blake3>();
+
+            let pre = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                pre.iter().any(|&b| b != 0),
+                "Blake3 가 비어 있음 — new_keyed/update 가 동작하지 않음"
+            );
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "Blake3 keyed 인스턴스가 Drop 후 소거되지 않음"
+            );
+        }
+    }
+
+    /// unkeyed Blake3 인스턴스도 동일하게 검증 — 회귀 범위가 keyed 모드 전용이 아닌
+    /// 전체 path 임을 명시.
+    #[test]
+    fn test_blake3_unkeyed_zeroize_on_drop() {
+        let mut storage: MaybeUninit<Blake3> = MaybeUninit::uninit();
+
+        unsafe {
+            storage.write(Blake3::new());
+            (*storage.as_mut_ptr()).update(b"non-empty regression-guard input");
+
+            let ptr = storage.as_ptr() as *const u8;
+            let byte_len = core::mem::size_of::<Blake3>();
+
+            let pre = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                pre.iter().any(|&b| b != 0),
+                "Blake3 가 비어 있음 — new/update 가 동작하지 않음"
+            );
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "Blake3 unkeyed 인스턴스가 Drop 후 소거되지 않음"
+            );
+        }
     }
 }

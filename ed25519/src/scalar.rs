@@ -622,4 +622,53 @@ fn sc_reduce_24(s: &mut [i64; 24]) {
     carry = s[10] >> 21;
     s[11] += carry;
     s[10] -= carry << 21;
+
+    // s[11] -> s[12] drain (이 단계가 누락되어 결함 발생)
+    carry = s[11] >> 21;
+    s[12] += carry;
+    s[11] -= carry << 21;
+
+    // s[12] 세 번째 fold (잔재 carry 처리)
+    s[0] += s[12] * L0;
+    s[1] += s[12] * L1;
+    s[2] += s[12] * L2;
+    s[3] += s[12] * L3;
+    s[4] += s[12] * L4;
+    s[5] += s[12] * L5;
+    s[12] = 0;
+
+    // 마지막 unrounded carry pass (s[0]..s[10] only — s[11] 은 이미 < 2^21)
+    carry = s[0] >> 21;
+    s[1] += carry;
+    s[0] -= carry << 21;
+    carry = s[1] >> 21;
+    s[2] += carry;
+    s[1] -= carry << 21;
+    carry = s[2] >> 21;
+    s[3] += carry;
+    s[2] -= carry << 21;
+    carry = s[3] >> 21;
+    s[4] += carry;
+    s[3] -= carry << 21;
+    carry = s[4] >> 21;
+    s[5] += carry;
+    s[4] -= carry << 21;
+    carry = s[5] >> 21;
+    s[6] += carry;
+    s[5] -= carry << 21;
+    carry = s[6] >> 21;
+    s[7] += carry;
+    s[6] -= carry << 21;
+    carry = s[7] >> 21;
+    s[8] += carry;
+    s[7] -= carry << 21;
+    carry = s[8] >> 21;
+    s[9] += carry;
+    s[8] -= carry << 21;
+    carry = s[9] >> 21;
+    s[10] += carry;
+    s[9] -= carry << 21;
+    carry = s[10] >> 21;
+    s[11] += carry;
+    s[10] -= carry << 21;
 }

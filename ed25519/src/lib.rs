@@ -451,7 +451,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: from_bytes_mod_order_wide 리덕션 완성 필요
     fn test_sign_verify_roundtrip() {
         let seed = [42u8; 32];
         let keypair = Keypair::from_seed(&seed);

@@ -1,10 +1,9 @@
 [package]
-name = "x25519"
+name = "elib-k0-mock-transport"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-constant-time.workspace = true
-zeroize.workspace = true
+elib-k0-ipc.workspace = true

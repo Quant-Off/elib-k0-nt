@@ -3,6 +3,7 @@ name = "ed448"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 sha3.workspace = true
