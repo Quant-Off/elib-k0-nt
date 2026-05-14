@@ -6,3 +6,11 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+rng = { workspace = true }
+zeroize = { workspace = true }
+# Phase 4 Plan 02 wire host 단위테스트 9 종 추가 (postcard bitexact + Blake3 cross-validation)
+blake = { workspace = true }
+postcard = { version = "1", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"] }
