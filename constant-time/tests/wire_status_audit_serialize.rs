@@ -19,7 +19,8 @@ mod tests {
     /// Status response payload 헤더 영역 written(2) + total(4) + reserved(2)
     const STATUS_PAYLOAD_HEADER: usize = 8;
     /// Status response payload 최대 길이 8 + 12*32 = 392 옥텟
-    const STATUS_PAYLOAD_MAX: usize = STATUS_PAYLOAD_HEADER + ENROLL_EVENT_SIZE * AUDIT_RING_CAPACITY;
+    const STATUS_PAYLOAD_MAX: usize =
+        STATUS_PAYLOAD_HEADER + ENROLL_EVENT_SIZE * AUDIT_RING_CAPACITY;
     /// wire frame 최대 길이 Phase 4 D-15 lock
     const WIRE_FRAME_MAX: usize = 4096;
     /// wire magic LWK0
@@ -53,13 +54,7 @@ mod tests {
     }
 
     /// 16 옥텟 wire header 직렬화
-    fn write_header(
-        cmd: u16,
-        req_id: u32,
-        payload_len: u16,
-        status: u16,
-        out: &mut [u8; 16],
-    ) {
+    fn write_header(cmd: u16, req_id: u32, payload_len: u16, status: u16, out: &mut [u8; 16]) {
         out[0..4].copy_from_slice(&WIRE_MAGIC);
         out[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
         out[6..8].copy_from_slice(&cmd.to_le_bytes());
@@ -128,13 +123,7 @@ mod tests {
             staging[off + 7] = events[i]._pad;
             staging[off + 8..off + 12].copy_from_slice(&events[i].pk_hash_prefix);
         }
-        build_response_frame(
-            req_id,
-            CMD_STATUS,
-            STATUS_OK,
-            &staging[..payload_len],
-            out,
-        )
+        build_response_frame(req_id, CMD_STATUS, STATUS_OK, &staging[..payload_len], out)
     }
 
     /// Status response payload 5 events 채운 ring 직렬화 byte-exact roundtrip 회귀
@@ -142,11 +131,46 @@ mod tests {
     fn status_response_layout_roundtrip() {
         // (1) host-side mock AUDIT_RING 5 events
         let events = [
-            EnrollEventLocal { seq: 1, slot_idx: 0, result: 1, bus_kind: 0, _pad: 0, pk_hash_prefix: [0x11, 0x22, 0x33, 0x44] },
-            EnrollEventLocal { seq: 2, slot_idx: 1, result: 2, bus_kind: 1, _pad: 0, pk_hash_prefix: [0x55, 0x66, 0x77, 0x88] },
-            EnrollEventLocal { seq: 3, slot_idx: 2, result: 5, bus_kind: 0, _pad: 0, pk_hash_prefix: [0x99, 0xAA, 0xBB, 0xCC] },
-            EnrollEventLocal { seq: 4, slot_idx: 0xFE, result: 6, bus_kind: 1, _pad: 0, pk_hash_prefix: [0xDD, 0xEE, 0xFF, 0x00] },
-            EnrollEventLocal { seq: 5, slot_idx: 0xFE, result: 5, bus_kind: 0, _pad: 0, pk_hash_prefix: [0xCA, 0xFE, 0xBA, 0xBE] },
+            EnrollEventLocal {
+                seq: 1,
+                slot_idx: 0,
+                result: 1,
+                bus_kind: 0,
+                _pad: 0,
+                pk_hash_prefix: [0x11, 0x22, 0x33, 0x44],
+            },
+            EnrollEventLocal {
+                seq: 2,
+                slot_idx: 1,
+                result: 2,
+                bus_kind: 1,
+                _pad: 0,
+                pk_hash_prefix: [0x55, 0x66, 0x77, 0x88],
+            },
+            EnrollEventLocal {
+                seq: 3,
+                slot_idx: 2,
+                result: 5,
+                bus_kind: 0,
+                _pad: 0,
+                pk_hash_prefix: [0x99, 0xAA, 0xBB, 0xCC],
+            },
+            EnrollEventLocal {
+                seq: 4,
+                slot_idx: 0xFE,
+                result: 6,
+                bus_kind: 1,
+                _pad: 0,
+                pk_hash_prefix: [0xDD, 0xEE, 0xFF, 0x00],
+            },
+            EnrollEventLocal {
+                seq: 5,
+                slot_idx: 0xFE,
+                result: 5,
+                bus_kind: 0,
+                _pad: 0,
+                pk_hash_prefix: [0xCA, 0xFE, 0xBA, 0xBE],
+            },
         ];
         let total: u32 = 5;
         // (2) mock dispatcher 호출 (payload empty)
@@ -163,7 +187,11 @@ mod tests {
             CMD_STATUS | WIRE_CMD_RESPONSE_BIT,
             "cmd Status | RESPONSE_BIT = 0x8080"
         );
-        assert_eq!(u16::from_le_bytes([out[12], out[13]]), 68u16, "payload_len 8 + 60");
+        assert_eq!(
+            u16::from_le_bytes([out[12], out[13]]),
+            68u16,
+            "payload_len 8 + 60"
+        );
         assert_eq!(u16::from_le_bytes([out[14], out[15]]), STATUS_OK);
         // (5) payload header 8 옥텟 byte-exact
         assert_eq!(u16::from_le_bytes([out[16], out[17]]), 5u16, "written 5");
@@ -204,7 +232,11 @@ mod tests {
         assert_eq!(n, 16 + STATUS_PAYLOAD_HEADER);
         assert_eq!(n, 24, "empty ring frame 24 옥텟");
         // (3) payload_len == 8 (header only)
-        assert_eq!(u16::from_le_bytes([out[12], out[13]]), 8u16, "payload_len 8");
+        assert_eq!(
+            u16::from_le_bytes([out[12], out[13]]),
+            8u16,
+            "payload_len 8"
+        );
         // (4) written u16 == 0
         assert_eq!(u16::from_le_bytes([out[16], out[17]]), 0u16, "written 0");
         // (5) total u32 == 0

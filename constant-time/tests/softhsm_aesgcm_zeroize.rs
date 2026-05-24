@@ -47,7 +47,10 @@ mod tests {
         // post-zeroize  key 와 nonce_counter 둘 다 0
         let post = *s.key.expose();
         assert_eq!(post, [0u8; 32], "key 가 zeroize 후 전부 0 이어야 함");
-        assert_eq!(s.nonce_counter, 0, "nonce_counter 가 zeroize 후 0 이어야 함");
+        assert_eq!(
+            s.nonce_counter, 0,
+            "nonce_counter 가 zeroize 후 0 이어야 함"
+        );
     }
 
     #[test]

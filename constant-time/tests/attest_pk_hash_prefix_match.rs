@@ -28,7 +28,11 @@ mod tests {
         hasher.update(pk);
         let digest_obj = hasher.finalize().expect("Blake3 finalize 실패");
         let digest_slice = digest_obj.as_slice();
-        assert_eq!(digest_slice.len(), BLAKE3_OUT_LEN, "BLAKE3 출력 길이 불일치");
+        assert_eq!(
+            digest_slice.len(),
+            BLAKE3_OUT_LEN,
+            "BLAKE3 출력 길이 불일치"
+        );
 
         let mut prefix = [0_u8; PREFIX_LEN];
         prefix.copy_from_slice(&digest_slice[..PREFIX_LEN]);

@@ -39,8 +39,8 @@ mod tests {
         let wire_magic_u32 = u32::from_le_bytes(WIRE_MAGIC);
         let magic_ok = CtEqOps::eq(&magic_u32, &wire_magic_u32).unwrap_u8() == 1;
         let version_ok = CtEqOps::eq(&version, &WIRE_VERSION).unwrap_u8() == 1;
-        let len_ok = (payload_len as usize) + 16 <= data.len()
-            && (payload_len as usize) <= WIRE_PAYLOAD_MAX;
+        let len_ok =
+            (payload_len as usize) + 16 <= data.len() && (payload_len as usize) <= WIRE_PAYLOAD_MAX;
         let cmd_is_request = (cmd & WIRE_CMD_RESPONSE_BIT) == 0 && cmd != CMD_ERROR;
         if !(magic_ok && version_ok && len_ok && cmd_is_request) {
             return Err(BusError::Internal);
@@ -71,18 +71,14 @@ mod tests {
 
     #[test]
     fn tier2_bad_magic_rejected() {
-        let data = build_frame_bytes(
-            [0x00, 0x57, 0x4B, 0x30],
-            WIRE_VERSION,
-            0x0010,
-            1,
-            0,
-            0,
-        );
+        let data = build_frame_bytes([0x00, 0x57, 0x4B, 0x30], WIRE_VERSION, 0x0010, 1, 0, 0);
         let mut pending = [0u8; WIRE_FRAME_MAX];
         let r = dispatcher_write_tier12(&data, &mut pending);
         assert_eq!(r, Err(BusError::Internal));
-        assert!(pending.iter().all(|&b| b == 0), "magic 위조 거부 후 pending 변경");
+        assert!(
+            pending.iter().all(|&b| b == 0),
+            "magic 위조 거부 후 pending 변경"
+        );
     }
 
     #[test]
@@ -91,7 +87,10 @@ mod tests {
         let mut pending = [0u8; WIRE_FRAME_MAX];
         let r = dispatcher_write_tier12(&data, &mut pending);
         assert_eq!(r, Err(BusError::Internal));
-        assert!(pending.iter().all(|&b| b == 0), "version 위조 거부 후 pending 변경");
+        assert!(
+            pending.iter().all(|&b| b == 0),
+            "version 위조 거부 후 pending 변경"
+        );
     }
 
     #[test]
@@ -101,7 +100,10 @@ mod tests {
         let mut pending = [0u8; WIRE_FRAME_MAX];
         let r = dispatcher_write_tier12(&data, &mut pending);
         assert_eq!(r, Err(BusError::Internal));
-        assert!(pending.iter().all(|&b| b == 0), "payload_len overflow 거부 후 pending 변경");
+        assert!(
+            pending.iter().all(|&b| b == 0),
+            "payload_len overflow 거부 후 pending 변경"
+        );
     }
 
     #[test]
@@ -109,12 +111,18 @@ mod tests {
         // cmd = 0xFFFF (Error)  request 분기 거부
         let data1 = build_frame_bytes(WIRE_MAGIC, WIRE_VERSION, CMD_ERROR, 1, 0, 0);
         let mut pending1 = [0u8; WIRE_FRAME_MAX];
-        assert_eq!(dispatcher_write_tier12(&data1, &mut pending1), Err(BusError::Internal));
+        assert_eq!(
+            dispatcher_write_tier12(&data1, &mut pending1),
+            Err(BusError::Internal)
+        );
         assert!(pending1.iter().all(|&b| b == 0));
         // cmd = 0x8001 (response bit set)  request 분기 거부
         let data2 = build_frame_bytes(WIRE_MAGIC, WIRE_VERSION, 0x8001, 1, 0, 0);
         let mut pending2 = [0u8; WIRE_FRAME_MAX];
-        assert_eq!(dispatcher_write_tier12(&data2, &mut pending2), Err(BusError::Internal));
+        assert_eq!(
+            dispatcher_write_tier12(&data2, &mut pending2),
+            Err(BusError::Internal)
+        );
         assert!(pending2.iter().all(|&b| b == 0));
     }
 }

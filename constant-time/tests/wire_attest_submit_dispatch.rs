@@ -39,13 +39,7 @@ mod tests {
     const _: () = assert!(WIRE_ATTEST_LEN == PK_LEN + 1 + SIG_LEN);
 
     /// 16 옥텟 wire header 직렬화 Phase 4 wire_blake3_response_bitexact L19-32 mirror
-    fn write_header(
-        cmd: u16,
-        req_id: u32,
-        payload_len: u16,
-        status: u16,
-        out: &mut [u8; 16],
-    ) {
+    fn write_header(cmd: u16, req_id: u32, payload_len: u16, status: u16, out: &mut [u8; 16]) {
         out[0..4].copy_from_slice(&WIRE_MAGIC);
         out[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
         out[6..8].copy_from_slice(&cmd.to_le_bytes());
@@ -112,9 +106,8 @@ mod tests {
         // SAFETY  payload.len == WIRE_ATTEST_LEN 검증 통과, repr 균등 byte stream
         let pk: &[u8; PK_LEN] = unsafe { &*(payload.as_ptr() as *const [u8; PK_LEN]) };
         let bus_octet = payload[PK_LEN];
-        let sig: &[u8; SIG_LEN] = unsafe {
-            &*(payload[PK_LEN + 1..].as_ptr() as *const [u8; SIG_LEN])
-        };
+        let sig: &[u8; SIG_LEN] =
+            unsafe { &*(payload[PK_LEN + 1..].as_ptr() as *const [u8; SIG_LEN]) };
         // (3) bus_kind octet decode
         if !matches!(bus_octet, 0 | 1) {
             return build_error_frame(req_id, STATUS_BAD_FRAME, out);
@@ -173,7 +166,10 @@ mod tests {
         let mut out = [0u8; WIRE_FRAME_MAX];
         let n = mock_handle_attest_submit(11, &payload, &mut out);
         // (3) error frame 16 옥텟 header only
-        assert_eq!(n, 16, "Denied 응답도 header only 16 옥텟 (size-side-channel 제거)");
+        assert_eq!(
+            n, 16,
+            "Denied 응답도 header only 16 옥텟 (size-side-channel 제거)"
+        );
         // (4) cmd == CMD_ERROR
         assert_eq!(
             u16::from_le_bytes([out[6], out[7]]),

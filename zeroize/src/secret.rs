@@ -118,7 +118,7 @@ impl<T> Drop for Secret<T> {
     fn drop(&mut self) {
         compiler_barrier();
 
-        let size = mem::size_of::<T>();
+        let size = size_of::<T>();
         let p = &mut self.inner as *mut T as *mut u8;
 
         for i in 0..size {

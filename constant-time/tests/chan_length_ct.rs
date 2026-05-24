@@ -28,7 +28,10 @@ mod tests {
         assert!(!check_byte_len(0), "0 은 reject");
         assert!(check_byte_len(1), "1 은 accept");
         assert!(check_byte_len(CHAN_MAX - 1), "CHAN_MAX-1 은 accept");
-        assert!(check_byte_len(CHAN_MAX), "CHAN_MAX 은 accept (D-13 4 KiB 정확 등호 허용)");
+        assert!(
+            check_byte_len(CHAN_MAX),
+            "CHAN_MAX 은 accept (D-13 4 KiB 정확 등호 허용)"
+        );
         assert!(!check_byte_len(CHAN_MAX + 1), "CHAN_MAX+1 은 reject");
         assert!(!check_byte_len(usize::MAX), "usize::MAX 은 reject");
     }

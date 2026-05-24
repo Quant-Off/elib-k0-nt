@@ -33,7 +33,11 @@ mod tests {
         // SAFETY: 단일 코어 테스트 + 직렬 실행  &MOCK_RELAY_BUF 직접 take
         let snapshot: [u8; 32] = unsafe { *(&raw const MOCK_RELAY_BUF as *const [u8; 32]) };
         for (i, b) in snapshot.iter().enumerate() {
-            assert_eq!(*b, 0, "[{}] byte {} should be 0 after with_relay_buf exit", label, i);
+            assert_eq!(
+                *b, 0,
+                "[{}] byte {} should be 0 after with_relay_buf exit",
+                label, i
+            );
         }
     }
 
@@ -111,7 +115,10 @@ mod tests {
         // SAFETY: 단일 코어 테스트
         unsafe {
             with_relay_buf_mock(|buf| {
-                assert_eq!(buf[0], 0, "entry zeroize 미실행  이전 호출 잔재 0x99 가 보임");
+                assert_eq!(
+                    buf[0], 0,
+                    "entry zeroize 미실행  이전 호출 잔재 0x99 가 보임"
+                );
                 assert_eq!(
                     buf[CHAN_MAX - 1],
                     0,

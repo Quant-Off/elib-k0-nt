@@ -55,10 +55,17 @@ mod tests {
         // (2) postcard::to_slice 결과
         let mut buf = [0u8; 32];
         let used = postcard::to_slice(&hdr, &mut buf).expect("postcard::to_slice 실패");
-        assert_eq!(used.len(), 16, "postcard fixint::le 출력 길이 16 bytes 불일치");
+        assert_eq!(
+            used.len(),
+            16,
+            "postcard fixint::le 출력 길이 16 bytes 불일치"
+        );
 
         // (3) byte-level 정확 일치
-        assert_eq!(used, &manual16, "postcard vs manual write_header byte 불일치");
+        assert_eq!(
+            used, &manual16,
+            "postcard vs manual write_header byte 불일치"
+        );
 
         // (4) round-trip  from_bytes 결과가 원본과 PartialEq
         let parsed: WireFrameHeader =

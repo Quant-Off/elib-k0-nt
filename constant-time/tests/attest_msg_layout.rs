@@ -43,7 +43,11 @@ mod tests {
         hasher.update(&pre);
         let digest_obj = hasher.finalize().expect("Blake3 finalize 실패");
         let digest_slice = digest_obj.as_slice();
-        assert_eq!(digest_slice.len(), DIGEST_LEN, "BLAKE3 출력 길이 ABI 불일치");
+        assert_eq!(
+            digest_slice.len(),
+            DIGEST_LEN,
+            "BLAKE3 출력 길이 ABI 불일치"
+        );
 
         let mut digest = [0_u8; DIGEST_LEN];
         digest.copy_from_slice(&digest_slice[..DIGEST_LEN]);
@@ -92,7 +96,11 @@ mod tests {
         let (pre_r3, digest_r3) = build_pre_and_digest(&pk, 1, &challenge);
 
         // (1) layout 동일 단 bus_kind octet 만 다름
-        assert_eq!(&pre_sw[0..PK_LEN], &pre_r3[0..PK_LEN], "pk 영역은 동일해야 함");
+        assert_eq!(
+            &pre_sw[0..PK_LEN],
+            &pre_r3[0..PK_LEN],
+            "pk 영역은 동일해야 함"
+        );
         assert_eq!(
             &pre_sw[PK_LEN + 1..],
             &pre_r3[PK_LEN + 1..],

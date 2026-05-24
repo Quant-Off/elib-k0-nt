@@ -98,9 +98,18 @@ mod tests {
         assert_eq!(ring.total, 35, "total 누적이 35 가 아님");
 
         // (3) oldest 3 events 가 가장 최근 3 enqueue (seq 32 33 34) 로 덮어쓰임
-        assert_eq!(ring.events[0].seq, 32, "events[0] 가 seq=32 로 덮어쓰이지 않음");
-        assert_eq!(ring.events[1].seq, 33, "events[1] 가 seq=33 로 덮어쓰이지 않음");
-        assert_eq!(ring.events[2].seq, 34, "events[2] 가 seq=34 로 덮어쓰이지 않음");
+        assert_eq!(
+            ring.events[0].seq, 32,
+            "events[0] 가 seq=32로 덮어쓰이지 않음"
+        );
+        assert_eq!(
+            ring.events[1].seq, 33,
+            "events[1] 가 seq=33로 덮어쓰이지 않음"
+        );
+        assert_eq!(
+            ring.events[2].seq, 34,
+            "events[2] 가 seq=34로 덮어쓰이지 않음"
+        );
 
         // (4) mid-buffer 보존 events[3] 는 처음 enqueue 후 다시 덮어쓰이지 않음
         //     (head 가 32+3=35 까지 도달해야 다시 overwrite — 35 회 enqueue 시점에서는 정확히 head=3 도달, events[3] 는 그대로)

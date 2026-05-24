@@ -459,4 +459,257 @@ mod tests {
         }
         assert!(report("CtLess::lt<u32>  (a<b vs a>b)", &stat[0], &stat[1]));
     }
+
+    //
+    // 확장 케이스
+    //
+    // 누락 폭 좁히기 위한 보강. ct_sel32/ct_sel64 가 u8/u16/i32 등 wrapper 를
+    // 통해 호출될 때도 CT 가 유지되는지, 그리고 128-bit / signed-128 / Choice
+    // 비트연산 / CtSelOps::swap (CWE-316 잔재 소거 포함) 까지 회귀를 검증.
+
+    #[test]
+    fn dudect_select_u8() {
+        let mut s = 0xa1a1_b2b2_c3c3_0010_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let (a, b) = (rnd_u8(&mut s), rnd_u8(&mut s));
+            black_box(u8::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let a = black_box(rnd_u8(&mut s));
+            let b = black_box(rnd_u8(&mut s));
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!(u8::select(&a, &b, c)));
+        }
+        assert!(report(
+            "u8::select  (choice=0 vs choice=1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    #[test]
+    fn dudect_select_u16() {
+        let mut s = 0xb2b2_c3c3_d4d4_0011_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let (a, b) = (rnd_u32(&mut s) as u16, rnd_u32(&mut s) as u16);
+            black_box(u16::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let a = black_box(rnd_u32(&mut s) as u16);
+            let b = black_box(rnd_u32(&mut s) as u16);
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!(u16::select(&a, &b, c)));
+        }
+        assert!(report(
+            "u16::select  (choice=0 vs choice=1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    #[test]
+    fn dudect_select_u128() {
+        let mut s = 0xc3c3_d4d4_e5e5_0012_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            let b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            black_box(u128::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!(u128::select(&a, &b, c)));
+        }
+        assert!(report(
+            "u128::select  (choice=0 vs choice=1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    #[test]
+    fn dudect_eq_u32() {
+        let mut s = 0xd4d4_e5e5_f6f6_0013_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let a = rnd_u32(&mut s);
+            black_box(CtEqOps::eq(&a, &a));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let a = black_box(rnd_u32(&mut s));
+            let b = if cl == 0 { a } else { a ^ 1 };
+            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+        }
+        assert!(report(
+            "CtEqOps::eq<u32>  (a==a vs a!=a^1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    #[test]
+    fn dudect_eq_u128() {
+        let mut s = 0xe5e5_f6f6_0707_0014_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            black_box(CtEqOps::eq(&a, &a));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let b = if cl == 0 { a } else { a ^ 1 };
+            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+        }
+        assert!(report(
+            "CtEqOps::eq<u128>  (a==a vs a!=a^1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    //
+    // i128 부호 있는 gt — sign-bit decomposition 경로 (ct_gt_i128) 회귀 가드.
+    //
+    //   Class 0: a >= 0, b <  0  →  a > b (signed)
+    //   Class 1: a <  0, b >= 0  →  a < b (signed)
+    #[test]
+    fn dudect_gt_i128() {
+        let mut s = 0xf6f6_0707_1818_0015_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        const SIGN128: u128 = 1u128 << 127;
+        for _ in 0..WARMUP {
+            let raw = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            let (a, b) = ((raw & !SIGN128) as i128, (raw | SIGN128) as i128);
+            black_box(CtGreeter::gt(&a, &b));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let raw = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let (a, b) = if cl == 0 {
+                ((raw & !SIGN128) as i128, (raw | SIGN128) as i128)
+            } else {
+                ((raw | SIGN128) as i128, (raw & !SIGN128) as i128)
+            };
+            stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+        }
+        assert!(report(
+            "CtGreeter::gt<i128>  (a>b vs a<b)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    //
+    // CtSelOps::swap — choice=0 (no-op) vs choice=1 (실제 교환).
+    //
+    // 두 경로의 timing 차이가 있다면 (예: branch on choice, 또는 잔재 영점화의
+    // 길이가 달라짐) |t| 가 임계치를 초과. 추가로 CWE-316 회귀 가드 역할도
+    // 동시에 수행 — volatile zero loop 가 선형적으로 size_of::<Self>() 만큼
+    // 실행되므로 항상 동일한 cycle 패턴이어야 함.
+    #[test]
+    fn dudect_swap_u64() {
+        let mut s = 0x0707_1818_2929_0016_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let mut a = rnd_u64(&mut s);
+            let mut b = rnd_u64(&mut s);
+            u64::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
+            black_box(&mut a);
+            black_box(&mut b);
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let mut a = black_box(rnd_u64(&mut s));
+            let mut b = black_box(rnd_u64(&mut s));
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!({
+                u64::swap(&mut a, &mut b, c);
+                (a, b)
+            }));
+        }
+        assert!(report(
+            "CtSelOps::swap<u64>  (choice=0 vs choice=1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    #[test]
+    fn dudect_swap_u128() {
+        let mut s = 0x1818_2929_3a3a_0017_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let mut a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            let mut b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+            u128::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
+            black_box(&mut a);
+            black_box(&mut b);
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let mut a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let mut b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!({
+                u128::swap(&mut a, &mut b, c);
+                (a, b)
+            }));
+        }
+        assert!(report(
+            "CtSelOps::swap<u128>  (choice=0 vs choice=1)",
+            &stat[0],
+            &stat[1]
+        ));
+    }
+
+    //
+    // Choice 비트연산 — 모두 단일 ALU op. 그러나 컴파일러가 input 패턴별로
+    // 다른 경로를 만들지 않는지 회귀 가드.
+    #[test]
+    fn dudect_choice_not() {
+        let mut s = 0x2929_3a3a_4b4b_0018_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let c = Choice::from_u8(rnd_u8(&mut s) & 1);
+            black_box(!c);
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            let c = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!(!black_box(c)));
+        }
+        assert!(report("Choice::not  (c=0 vs c=1)", &stat[0], &stat[1]));
+    }
+
+    #[test]
+    fn dudect_choice_bitops() {
+        let mut s = 0x3a3a_4b4b_5c5c_0019_u64;
+        let mut stat = [Stats::default(), Stats::default()];
+        for _ in 0..WARMUP {
+            let x = Choice::from_u8(rnd_u8(&mut s) & 1);
+            let y = Choice::from_u8(rnd_u8(&mut s) & 1);
+            black_box((x & y) | (x ^ y));
+        }
+        for i in 0..MEASUREMENTS {
+            let cl = i & 1;
+            // 두 클래스 모두 동일 산술량을 수행. 입력만 다름.
+            let x = Choice::from_u8(((i >> 1) & 1) as u8);
+            let y = Choice::from_u8(cl as u8);
+            stat[cl].push(measure!({
+                let x = black_box(x);
+                let y = black_box(y);
+                (x & y) | (x ^ y)
+            }));
+        }
+        assert!(report("Choice::&|^  (mixed inputs)", &stat[0], &stat[1]));
+    }
 }

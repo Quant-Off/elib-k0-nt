@@ -41,13 +41,7 @@ mod tests {
         }
     }
 
-    fn write_header(
-        cmd: u16,
-        req_id: u32,
-        payload_len: u16,
-        status: u16,
-        out: &mut [u8; 16],
-    ) {
+    fn write_header(cmd: u16, req_id: u32, payload_len: u16, status: u16, out: &mut [u8; 16]) {
         out[0..4].copy_from_slice(&WIRE_MAGIC);
         out[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
         out[6..8].copy_from_slice(&cmd.to_le_bytes());
@@ -56,7 +50,11 @@ mod tests {
         out[14..16].copy_from_slice(&status.to_le_bytes());
     }
 
-    fn build_error_frame_inplace(req_id: u32, status: u16, out: &mut [u8; WIRE_FRAME_MAX]) -> usize {
+    fn build_error_frame_inplace(
+        req_id: u32,
+        status: u16,
+        out: &mut [u8; WIRE_FRAME_MAX],
+    ) -> usize {
         let mut hdr_bytes = [0u8; 16];
         write_header(CMD_ERROR, req_id, 0, status, &mut hdr_bytes);
         out[..16].copy_from_slice(&hdr_bytes);
@@ -69,7 +67,11 @@ mod tests {
     }
 
     // src/bus.rs::handle_blake3 mock  cap auth 실패 분기만 책임
-    fn handle_blake3_authfail(req_id: u32, payload: &[u8], out: &mut [u8; WIRE_FRAME_MAX]) -> usize {
+    fn handle_blake3_authfail(
+        req_id: u32,
+        payload: &[u8],
+        out: &mut [u8; WIRE_FRAME_MAX],
+    ) -> usize {
         if payload.len() < 16 {
             return build_error_frame_inplace(req_id, 1, out); // BadFrame
         }

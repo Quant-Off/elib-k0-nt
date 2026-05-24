@@ -16,7 +16,7 @@
 // x86_64
 //
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
@@ -34,7 +34,7 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     result
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
@@ -52,7 +52,7 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     result
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
@@ -70,7 +70,7 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
     result
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
@@ -89,7 +89,7 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
 }
 
 // seta: CF=0 AND ZF=0  ->  a > b (unsigned)
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
@@ -107,7 +107,7 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     result
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
@@ -127,7 +127,7 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
 
 // setg: ZF=0 AND SF=OF  ->  a > b (signed)
 // Smaller signed types are sign-extended to i64 by the caller.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
@@ -150,14 +150,14 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 //             sign-extended before the call.
 //
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     ct_sel64(cond, a as u64, b as u64) as u32
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
@@ -176,14 +176,14 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     result
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
     ct_eq64(a as u64, b as u64)
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
@@ -202,14 +202,14 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
 }
 
 // cset hi: C=1 AND Z=0  ->  a > b (unsigned)
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     ct_gt_u64(a as u64, b as u64)
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
@@ -228,7 +228,7 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
 }
 
 // cset gt: Z=0 AND N=V  ->  a > b (signed)
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
@@ -257,7 +257,7 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 // Supported architectures with hardware CT guarantees: x86_64, aarch64
 //
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const _: () = {
     #[deprecated(
         since = "0.1.0",
@@ -268,21 +268,21 @@ const _: () = {
     let _ = CT_FALLBACK_WARNING;
 };
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[inline(never)]
 pub(crate) fn ct_mask(cond: u8) -> u64 {
     let c = core::hint::black_box(cond as u64);
     core::hint::black_box(((c | c.wrapping_neg()) >> 63).wrapping_neg())
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     ct_sel64(cond, a as u64, b as u64) as u32
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
 pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
@@ -292,7 +292,7 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     core::hint::black_box((m & a) | ((!m) & b))
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
@@ -301,7 +301,7 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
 
 // XOR -> 0 iff equal; fold all bits into the LSB via cascading OR-shifts.
 // Result is 1 if a == b, else 0.
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
 pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
@@ -320,7 +320,7 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
 
 // Borrow detection: b - a underflows iff a > b (unsigned).
 // The borrow propagates into bit 32 of the widened 64-bit result.
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
 pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
@@ -330,7 +330,7 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     core::hint::black_box((diff >> 32) as u8 & 1)
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
@@ -353,7 +353,7 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
 //   a > b (signed) iff
 //     (same_sign AND a >_unsigned b)   — two's complement same-sign comparison
 //     OR (a is non-negative AND b is negative)
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
 pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {

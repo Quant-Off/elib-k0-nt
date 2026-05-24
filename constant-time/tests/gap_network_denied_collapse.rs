@@ -108,7 +108,9 @@ mod tests {
     fn closed_build_attach_audit_emitted() {
         let _expected_event = enroll(0, 0xFF, 2, BUS_KIND_NETWORK);
         let _expected_rax: i64 = SYS_DENIED_RAX;
-        todo!("Plan 06-04 GREEN fill-in — closed handle_attach Network audit_enqueue + Denied 회귀 (D-01)")
+        todo!(
+            "Plan 06-04 GREEN fill-in — closed handle_attach Network audit_enqueue + Denied 회귀 (D-01)"
+        )
     }
 
     /// tls-external 빌드 NETWORK_ATTACH cap 미보유 → audit_enqueue + Denied (D-01)
@@ -117,7 +119,9 @@ mod tests {
         let _caller_cap = cap_sim(0); // token=0 (미보유)
         let _expected_event = enroll(0, 0xFF, 2, BUS_KIND_NETWORK);
         let _expected_rax: i64 = SYS_DENIED_RAX;
-        todo!("Plan 06-04 GREEN fill-in — tls-external NETWORK_ATTACH_CAP 미보유 시 Denied + audit 회귀 (D-01)")
+        todo!(
+            "Plan 06-04 GREEN fill-in — tls-external NETWORK_ATTACH_CAP 미보유 시 Denied + audit 회귀 (D-01)"
+        )
     }
 
     /// 5 NetworkDenied 카테고리 모두 RAX = SYS_DENIED_RAX (-4) 단일 일치 — variant 노출 0
@@ -134,17 +138,19 @@ mod tests {
     #[test]
     fn variant_collapse_single_rax_denied() {
         let denied_categories: [(u8, u8, u8); 5] = [
-            (0xFF, 2, BUS_KIND_NETWORK),   // 1. closed handle_attach Network
-            (0xFF, 2, BUS_KIND_NETWORK),   // 2. tls-external cap-less attach
-            (0xFE, 2, BUS_KIND_NETWORK),   // 3. NETWORK_CAP_TAKE Taken
-            (0xFD, 2, BUS_KIND_SOFTWARE),  // 4. AUDIT_READ take Taken
-            (0xFF, 2, BUS_KIND_SOFTWARE),  // 5. sys_hsm_status cap-fail
+            (0xFF, 2, BUS_KIND_NETWORK),  // 1. closed handle_attach Network
+            (0xFF, 2, BUS_KIND_NETWORK),  // 2. tls-external cap-less attach
+            (0xFE, 2, BUS_KIND_NETWORK),  // 3. NETWORK_CAP_TAKE Taken
+            (0xFD, 2, BUS_KIND_SOFTWARE), // 4. AUDIT_READ take Taken
+            (0xFF, 2, BUS_KIND_SOFTWARE), // 5. sys_hsm_status cap-fail
         ];
         // Wave 0 sanity — 5 카테고리 모두 result=2 잠금
         for (idx, (_slot, result, _bus)) in denied_categories.iter().enumerate() {
             assert_eq!(*result, 2u8, "카테고리 {} result != 2 (D-04 위반)", idx);
         }
-        todo!("Plan 06-02 + 06-04 GREEN fill-in — 5 카테고리 모두 RAX = -4 단일 누설 회귀 (Pitfall 7)")
+        todo!(
+            "Plan 06-02 + 06-04 GREEN fill-in — 5 카테고리 모두 RAX = -4 단일 누설 회귀 (Pitfall 7)"
+        )
     }
 
     /// 5 호출 지점이 각각 (slot_idx, result, bus_kind) 튜플로 식별 가능
@@ -163,11 +169,11 @@ mod tests {
     #[test]
     fn audit_enqueue_five_sites_distinct() {
         let five_sites: [(u8, u8, u8); 5] = [
-            (0xFF, 2, BUS_KIND_NETWORK),    // 1. handle_attach Network 거부
-            (0xFE, 2, BUS_KIND_NETWORK),    // 2. NETWORK_CAP take-taken
-            (0xFE, 3, BUS_KIND_NETWORK),    // 3. NETWORK_CAP take-success
-            (0xFD, 2, BUS_KIND_SOFTWARE),   // 4. AUDIT_READ take-taken
-            (0xFD, 3, BUS_KIND_SOFTWARE),   // 5. AUDIT_READ take-success
+            (0xFF, 2, BUS_KIND_NETWORK),  // 1. handle_attach Network 거부
+            (0xFE, 2, BUS_KIND_NETWORK),  // 2. NETWORK_CAP take-taken
+            (0xFE, 3, BUS_KIND_NETWORK),  // 3. NETWORK_CAP take-success
+            (0xFD, 2, BUS_KIND_SOFTWARE), // 4. AUDIT_READ take-taken
+            (0xFD, 3, BUS_KIND_SOFTWARE), // 5. AUDIT_READ take-success
         ];
         // Wave 0 sanity — 5 사이트가 (slot, result, bus) 튜플로 페어와이즈 식별 가능
         for i in 0..5 {

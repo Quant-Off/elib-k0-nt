@@ -1,16 +1,16 @@
 //! BLAKE2b 및 BLAKE3 암호 해시 함수 모듈입니다.
 //!
 //! BLAKE2b는 RFC 7693을 준수하며, BLAKE3는 공식 명세를 따릅니다.
-//! 민감 데이터는 `SecureBuffer`에 보관하며, Drop 시 내부 상태를
-//! `write_volatile`로 강제 소거합니다.
+//! 민감 데이터는 [SecureBuffer]에 보관하며, Drop 시 내부 상태를
+//! [ptr::write_volatile]로 강제 소거합니다.
 //!
-//! 상수-시간 비교는 `constant-time` 크레이트를 통해 수행됩니다.
-//! aarch64, x86_64, 베어메탈에서 동일하게 작동합니다.
+//! 상수-시간 비교는 플랫폼(환경)에 상관없이 `constant-time` 
+//! 크레이트를 통해 정상적으로 수행됩니다.
 //!
 //! ---
 //!
-//! `blake2b` 해시는 `blake2`의 변형 중 하나로, 64비트 플랫폼(최신 서버,
-//! PC)에 최적화되어 있으며, 최대 512비트의 다이제스트를 생성합니다. 추 후
+//! `blake2b`해시는 `blake2`의 변형 중 하나로, 64비트 플랫폼(최신
+//! 서버)에 최적화되어 있으며, 최대 512비트의 다이제스트를 생성합니다. 추 후
 //! 다중 코어를 활용하기 위한 병렬 처리를 지원하는 `blake2bp`, `blake2sp`
 //! 를 지원할 예정입니다.
 //!
@@ -110,27 +110,42 @@ impl Zeroize for SecureBuffer {
     #[inline]
     fn zeroize(&mut self) {
         self.data.zeroize();
+        self.len.zeroize();
     }
 }
 
-/// 상수-시간 바이트 슬라이스 비교입니다.
-///
-/// 두 슬라이스가 동일한 길이와 내용을 가지면 `Choice(1)` 반환.
-/// 길이가 다르면 `Choice(0)` 반환 (상수 시간).
-#[inline]
-pub fn ct_eq_slice(a: &[u8], b: &[u8]) -> Choice {
-    // 길이 비교도 상수-시간으로 수행
-    let len_eq = CtEqOps::eq(&a.len(), &b.len());
+impl Drop for SecureBuffer {
+    #[inline]
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
-    // 두 슬라이스 중 작은 길이만큼 비교
-    let min_len = if a.len() < b.len() { a.len() } else { b.len() };
+/// 상수시간 바이트 슬라이스 비교 함수입니다.
+///
+/// 두 슬라이스가 동일한 길이와 내용을 가지면 `Choice(1)` 을, 내용이 다르거나
+/// 길이가 다르면 `Choice(0)` 을 반환합니다.
+///
+/// # Security Note
+/// 본 함수의 상수시간 보장은 두 슬라이스의 길이가 공개임을 가정합니다.
+/// (FIPS / SP 표준상 MAC 태그, 해시 다이제스트, 키 등 비교 대상의 길이는
+/// 공개 파라미터로 정의됨. 가변 비밀 평문의 동등성 비교에는 적합하지 않음.)
+/// 동일 길이 입력에 대해서는 입력 내용과 무관하게 동일 사이클을 소비합니다.
+/// 길이 불일치 시 짧은 쪽까지 비교 후 길이비교 결과로 0으로 마스킹되어
+/// 최종 결과가 `Choice(0)`이 되며, 어떤 분기 결과도 호출자에게 직접 누설
+/// 되지 않습니다.
+pub fn ct_eq_slice(a: &[u8], b: &[u8]) -> Choice {
+    let len_eq = CtEqOps::eq(&a.len(), &b.len());
+    // 두 슬라이스 길이는 공개 가정
+    // `min` 산출의 비교가 공개 데이터 분기
+    let min_len = a.len().min(b.len());
 
     let mut result = Choice::from_u8(1);
     for i in 0..min_len {
         result &= CtEqOps::eq(&a[i], &b[i]);
     }
 
-    // 길이가 다르면 결과는 무조건 false
+    // 길이가 다르면 len_eq == 0 으로 최종 결과 마스킹
     result & len_eq
 }
 
@@ -420,14 +435,49 @@ mod tests {
         assert_eq!(CtEqOps::eq(&buf1, &buf2).unwrap_u8(), 0);
     }
 
+    /// Blake2b 인스턴스가 update 후 nonempty 상태에서 Drop 시
+    /// h / t / buf / buf_len / hash_len 전체가 0으로 소거되는지 검증
+    /// blake3의 zeroize_on_drop 회귀 가드와 일관성을 맞추기 위한 추가 케이스
+    #[test]
+    #[cfg_attr(miri, ignore)] // padding byte scan 은 MIRI typed read 모델 외 stable 에서만 실행
+    fn test_blake2b_zeroize_on_drop() {
+        let mut storage: MaybeUninit<Blake2b> = MaybeUninit::uninit();
+        // addr_of! 는 borrow tag 를 생성하지 않으므로 후속 &mut 작업 후에도
+        // raw pointer 가 유효하게 유지 (Stacked Borrows 회피)
+        let ptr = core::ptr::addr_of!(storage) as *const u8;
+        let byte_len = size_of::<Blake2b>();
+
+        unsafe {
+            storage.write(Blake2b::new(64));
+            (*storage.as_mut_ptr()).update(b"non-empty regression-guard input");
+
+            let pre = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                pre.iter().any(|&b| b != 0),
+                "Blake2b 가 비어 있음 new/update 가 동작하지 않음"
+            );
+
+            storage.assume_init_drop();
+
+            let post = core::slice::from_raw_parts(ptr, byte_len);
+            assert!(
+                post.iter().all(|&b| b == 0),
+                "Blake2b 인스턴스가 Drop 후 소거되지 않음"
+            );
+        }
+    }
+
     /// keyed Blake3 인스턴스가 update 후 비-empty 상태에서 Drop 시
     /// key_words / cv_stack / chunk_state.{chaining_value, buf} / flags / cv_stack_len
     /// 모두 0 으로 소거되는지 검증.
     /// 회귀 가드 — 향후 plain [u32; 8] 또는 plain int 필드 재도입 시 본 테스트가 실패해야 함.
     #[test]
+    #[cfg_attr(miri, ignore)] // padding byte scan 은 MIRI typed read 모델 외 stable 에서만 실행
     fn test_blake3_keyed_zeroize_on_drop() {
         let key = [0xA5u8; 32];
         let mut storage: MaybeUninit<Blake3> = MaybeUninit::uninit();
+        let ptr = core::ptr::addr_of!(storage) as *const u8;
+        let byte_len = core::mem::size_of::<Blake3>();
 
         unsafe {
             storage.write(Blake3::new_keyed(&key));
@@ -435,9 +485,6 @@ mod tests {
             (*storage.as_mut_ptr()).update(b"non-empty regression-guard input");
 
             // Blake3 전체 byte-extent 위에서 raw-pointer 스캔
-            let ptr = storage.as_ptr() as *const u8;
-            let byte_len = core::mem::size_of::<Blake3>();
-
             let pre = core::slice::from_raw_parts(ptr, byte_len);
             assert!(
                 pre.iter().any(|&b| b != 0),
@@ -457,15 +504,15 @@ mod tests {
     /// unkeyed Blake3 인스턴스도 동일하게 검증 — 회귀 범위가 keyed 모드 전용이 아닌
     /// 전체 path 임을 명시.
     #[test]
+    #[cfg_attr(miri, ignore)] // padding byte scan 은 MIRI typed read 모델 외 stable 에서만 실행
     fn test_blake3_unkeyed_zeroize_on_drop() {
         let mut storage: MaybeUninit<Blake3> = MaybeUninit::uninit();
+        let ptr = core::ptr::addr_of!(storage) as *const u8;
+        let byte_len = core::mem::size_of::<Blake3>();
 
         unsafe {
             storage.write(Blake3::new());
             (*storage.as_mut_ptr()).update(b"non-empty regression-guard input");
-
-            let ptr = storage.as_ptr() as *const u8;
-            let byte_len = core::mem::size_of::<Blake3>();
 
             let pre = core::slice::from_raw_parts(ptr, byte_len);
             assert!(

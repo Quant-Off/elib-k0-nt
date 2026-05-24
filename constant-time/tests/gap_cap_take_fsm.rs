@@ -104,7 +104,9 @@ mod tests {
         let mut _state = NetCapState::Provisioned;
         let _stored = cap_sim(0xDEADBEEFCAFEBABE);
         let _expected_event = enroll(0, 0xFE, 3, 6);
-        todo!("Plan 06-02 GREEN fill-in — take_network_cap Provisioned→Taken + audit result=3 회귀 (D-03)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — take_network_cap Provisioned→Taken + audit result=3 회귀 (D-03)"
+        )
     }
 
     /// state == Taken 재호출 시 Denied + audit_enqueue(0xFE, 2, 6, [0;4]) 1 회 (D-04 콜럐스)
@@ -113,7 +115,9 @@ mod tests {
         let mut _state = NetCapState::Taken;
         let _stored = cap_sim(0xDEADBEEFCAFEBABE);
         let _expected_event = enroll(0, 0xFE, 2, 6);
-        todo!("Plan 06-02 GREEN fill-in — take_network_cap Taken 재호출 시 Denied + audit result=2 회귀 (D-04)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — take_network_cap Taken 재호출 시 Denied + audit result=2 회귀 (D-04)"
+        )
     }
 
     /// AUDIT_READ_CAP 대칭 take — slot=0xFD bus_kind=0 BusKind::Software 도용 (D-06)
@@ -123,7 +127,9 @@ mod tests {
         let _stored = cap_sim(0x1234567890ABCDEF);
         // slot=0xFD AUDIT_READ_CAP 식별자 bus_kind=0 BusKind::Software 도용 (D-06)
         let _expected_event = enroll(0, 0xFD, 3, 0);
-        todo!("Plan 06-02 GREEN fill-in — take_audit_read_cap Provisioned→Taken + audit result=3 회귀 (D-06)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — take_audit_read_cap Provisioned→Taken + audit result=3 회귀 (D-06)"
+        )
     }
 
     /// AUDIT_READ_CAP 대칭 take-taken — slot=0xFD result=2
@@ -132,7 +138,9 @@ mod tests {
         let mut _state = NetCapState::Taken;
         let _stored = cap_sim(0x1234567890ABCDEF);
         let _expected_event = enroll(0, 0xFD, 2, 0);
-        todo!("Plan 06-02 GREEN fill-in — take_audit_read_cap Taken 재호출 시 Denied + audit result=2 회귀 (D-04 D-06)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — take_audit_read_cap Taken 재호출 시 Denied + audit result=2 회귀 (D-04 D-06)"
+        )
     }
 
     /// CtEqOps::eq(stored.token, caller.token) 가 token-bit 위치 독립 분기 (CT cap compare)

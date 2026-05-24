@@ -1,0 +1,37 @@
+# ctgrind 검증 환경(Linux x86_64)
+#
+# Valgrind memcheck 는 'undefined' 로 마킹된 메모리에 의존하는 분기 /
+# 인덱스 연산을 결정론적으로 보고합니다. 이를 활용해 비밀 입력을
+# VALGRIND_MAKE_MEM_UNDEFINED 로 표시하면 비밀 의존성이 즉시 감지됩니다.
+#
+# DudeCT (통계 기반) 가 잡지 못한 거짓 음성(false-negative)을 결정론적으로
+# 보완합니다.
+#
+# 빌드:
+#     docker build -f scripts/Dockerfile.ctgrind -t elib-ctgrind .
+#
+# 검증 실행 (저장소 mount):
+#     docker run --rm -v "$(pwd):/work" -w /work elib-ctgrind \
+#         bash scripts/run_ctgrind.sh
+#
+# 호스트가 ARM(Apple Silicon)인 경우 자동 x86_64 에뮬레이션(느리지만
+# 정확). amd64 호스트는 native 속도로 실행.
+
+FROM --platform=linux/amd64 rust:1-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        valgrind \
+        clang \
+        build-essential \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# x86_64-unknown-none 타깃은 워크스페이스 기본 타깃이므로 추가 설치
+RUN rustup target add x86_64-unknown-none
+
+# 컨테이너 안에서는 항상 x86_64 호스트 빌드 (Valgrind 가 x86_64 만 지원)
+ENV CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu
+
+WORKDIR /work
+
+CMD ["bash"]

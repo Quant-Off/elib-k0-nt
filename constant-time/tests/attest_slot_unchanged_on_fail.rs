@@ -122,7 +122,10 @@ mod tests {
         ];
 
         let result = attach_mock_with_attest(&mut slots, 0x07, true);
-        assert!(result.is_err(), "attest verify 실패 시 attach 가 Err 반환 안 함");
+        assert!(
+            result.is_err(),
+            "attest verify 실패 시 attach 가 Err 반환 안 함"
+        );
 
         // 모든 슬롯이 변경 없음 (all-or-nothing atomicity)
         for (i, slot) in slots.iter().enumerate() {
@@ -177,8 +180,14 @@ mod tests {
         audit_enqueue(&mut ring, 0xFF, 1, 0, [0_u8; 4]);
 
         // (3) 단언 events[0] 가 sentinel 으로 기록
-        assert_eq!(ring.events[0].slot_idx, 0xFF, "sentinel slot_idx=0xFF 가 기록 안 됨");
-        assert_eq!(ring.events[0].result, 1, "result=1 (AttestFailed) 가 기록 안 됨");
+        assert_eq!(
+            ring.events[0].slot_idx, 0xFF,
+            "sentinel slot_idx=0xFF 가 기록 안 됨"
+        );
+        assert_eq!(
+            ring.events[0].result, 1,
+            "result=1 (AttestFailed) 가 기록 안 됨"
+        );
         assert_eq!(ring.events[0].seq, 0, "첫 enqueue seq 가 0 이 아님");
         assert_eq!(ring.head, 1, "1 회 enqueue 후 head 가 1 이 아님");
         assert_eq!(ring.total, 1, "1 회 enqueue 후 total 이 1 이 아님");

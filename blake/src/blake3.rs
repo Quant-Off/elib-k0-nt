@@ -103,12 +103,19 @@ impl Blake3 {
     }
 
     fn push_cv(&mut self, cv: Secret<[u32; 8]>) {
+        // BLAKE3 명세상 cv_stack 최대 깊이는 ceil(log2(2^54)) = 54
+        // 16 EiB 입력 한계를 넘어서면 push가 OOB panic. zero-trust 회귀 가드
+        debug_assert!(
+            self.cv_stack_len < 54,
+            "Blake3 cv_stack 깊이 한계 초과 입력 한계 16 EiB 도달"
+        );
         self.cv_stack.expose_mut()[self.cv_stack_len] = *cv.expose();
         self.cv_stack_len += 1;
         // cv Drop runs at end of body → volatile-zero of the consumed Secret
     }
 
     fn pop_cv(&mut self) -> Secret<[u32; 8]> {
+        debug_assert!(self.cv_stack_len > 0, "Blake3 cv_stack pop underflow");
         self.cv_stack_len -= 1;
         Secret::new(self.cv_stack.expose()[self.cv_stack_len])
     }

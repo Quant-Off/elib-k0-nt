@@ -35,7 +35,10 @@ mod tests {
     #[test]
     fn test_u64_max_freezes_writes() {
         let mut s = MockAesGcmCounter::new(u64::MAX);
-        assert!(s.simulate_write().is_err(), "u64::MAX counter 는 write 거부");
+        assert!(
+            s.simulate_write().is_err(),
+            "u64::MAX counter 는 write 거부"
+        );
         // 거부 후 counter 변경 0
         assert_eq!(s.counter, u64::MAX);
     }

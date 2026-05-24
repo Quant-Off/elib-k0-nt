@@ -16,13 +16,7 @@ mod tests {
     const CMD_BLAKE3HASH: u16 = 0x0010;
     const STATUS_OK: u16 = 0;
 
-    fn write_header(
-        cmd: u16,
-        req_id: u32,
-        payload_len: u16,
-        status: u16,
-        out: &mut [u8; 16],
-    ) {
+    fn write_header(cmd: u16, req_id: u32, payload_len: u16, status: u16, out: &mut [u8; 16]) {
         out[0..4].copy_from_slice(&WIRE_MAGIC);
         out[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
         out[6..8].copy_from_slice(&cmd.to_le_bytes());
@@ -61,7 +55,11 @@ mod tests {
         hasher.update(input);
         let digest_obj = hasher.finalize().expect("Blake3 finalize 실패");
         let digest_slice = digest_obj.as_slice();
-        assert_eq!(digest_slice.len(), BLAKE3_OUT_LEN, "BLAKE3_OUT_LEN ABI 불일치");
+        assert_eq!(
+            digest_slice.len(),
+            BLAKE3_OUT_LEN,
+            "BLAKE3_OUT_LEN ABI 불일치"
+        );
         let mut digest = [0u8; 32];
         digest.copy_from_slice(&digest_slice[..32]);
 
@@ -71,7 +69,11 @@ mod tests {
         assert_eq!(n, 16 + 32);
 
         // (4) frame[16..48] 가 digest 와 byte-level 정확 일치
-        assert_eq!(&out[16..48], &digest, "response payload 가 Blake3 digest 와 byte 불일치");
+        assert_eq!(
+            &out[16..48],
+            &digest,
+            "response payload 가 Blake3 digest 와 byte 불일치"
+        );
 
         // (5) header 필드  cmd=Blake3Hash|RESPONSE_BIT, status=Ok, payload_len=32
         assert_eq!(

@@ -71,10 +71,26 @@ mod tests {
         /// 모든 slot snapshot byte-exact 비교용 raw
         fn slots_raw(&self) -> [(u8, u64, u32); 4] {
             [
-                (self.slots[0].state, self.slots[0].token, self.slots[0].rights),
-                (self.slots[1].state, self.slots[1].token, self.slots[1].rights),
-                (self.slots[2].state, self.slots[2].token, self.slots[2].rights),
-                (self.slots[3].state, self.slots[3].token, self.slots[3].rights),
+                (
+                    self.slots[0].state,
+                    self.slots[0].token,
+                    self.slots[0].rights,
+                ),
+                (
+                    self.slots[1].state,
+                    self.slots[1].token,
+                    self.slots[1].rights,
+                ),
+                (
+                    self.slots[2].state,
+                    self.slots[2].token,
+                    self.slots[2].rights,
+                ),
+                (
+                    self.slots[3].state,
+                    self.slots[3].token,
+                    self.slots[3].rights,
+                ),
             ]
         }
     }
@@ -105,19 +121,17 @@ mod tests {
         }
 
         fn enqueue(&mut self, slot_idx: u8, result: u8, bus_kind: u8) {
-            self.events[self.head] = MockEvent { slot_idx, result, bus_kind };
+            self.events[self.head] = MockEvent {
+                slot_idx,
+                result,
+                bus_kind,
+            };
             self.head = (self.head + 1) % AUDIT_RING_CAPACITY;
             self.total = self.total.saturating_add(1);
         }
     }
 
-    fn write_header(
-        cmd: u16,
-        req_id: u32,
-        payload_len: u16,
-        status: u16,
-        out: &mut [u8; 16],
-    ) {
+    fn write_header(cmd: u16, req_id: u32, payload_len: u16, status: u16, out: &mut [u8; 16]) {
         out[0..4].copy_from_slice(&WIRE_MAGIC);
         out[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
         out[6..8].copy_from_slice(&cmd.to_le_bytes());
@@ -181,9 +195,8 @@ mod tests {
         // SAFETY  payload.len 검증 통과
         let pk: &[u8; PK_LEN] = unsafe { &*(payload.as_ptr() as *const [u8; PK_LEN]) };
         let bus_octet = payload[PK_LEN];
-        let sig: &[u8; SIG_LEN] = unsafe {
-            &*(payload[PK_LEN + 1..].as_ptr() as *const [u8; SIG_LEN])
-        };
+        let sig: &[u8; SIG_LEN] =
+            unsafe { &*(payload[PK_LEN + 1..].as_ptr() as *const [u8; SIG_LEN]) };
         if !matches!(bus_octet, 0 | 1) {
             return build_error_frame(req_id, 1u16, out);
         }

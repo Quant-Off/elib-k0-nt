@@ -15,7 +15,10 @@ mod tests {
     }
 
     // src/bus.rs::Ring3ProcessBus::write 의 Tier 1 검사만 추출한 mock
-    fn dispatcher_write_tier1(data: &[u8], pending: &mut [u8; WIRE_FRAME_MAX]) -> Result<usize, BusError> {
+    fn dispatcher_write_tier1(
+        data: &[u8],
+        pending: &mut [u8; WIRE_FRAME_MAX],
+    ) -> Result<usize, BusError> {
         if data.len() < 16 || data.len() > WIRE_FRAME_MAX {
             return Err(BusError::Internal);
         }

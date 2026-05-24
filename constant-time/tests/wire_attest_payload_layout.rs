@@ -39,7 +39,11 @@ mod tests {
         // (3) byte-exact split 검증
         assert_eq!(&payload[..PK_LEN], &pk[..], "pk 영역 [0..1312] byte-exact");
         assert_eq!(payload[PK_LEN], bus_kind, "bus_kind 옥텟 [1312] byte-exact");
-        assert_eq!(&payload[PK_LEN + 1..], &sig[..], "sig 영역 [1313..3733] byte-exact");
+        assert_eq!(
+            &payload[PK_LEN + 1..],
+            &sig[..],
+            "sig 영역 [1313..3733] byte-exact"
+        );
         // (4) 총 길이 3733 D-01 ABI 잠금
         assert_eq!(payload.len(), 3733);
         // (5) 영역 경계 byte-level 비교
@@ -87,11 +91,16 @@ mod tests {
         // (4) byte-exact 기대값
         assert_eq!(
             bytes,
-            [0x01, 0x00, 0x00, 0x00, 0x0A, 0x05, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF],
+            [
+                0x01, 0x00, 0x00, 0x00, 0x0A, 0x05, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF
+            ],
             "EnrollEvent raw 12 옥텟 layout byte-exact (seq u32 LE | slot | result | bus | pad | prefix [u8;4])"
         );
         // (5) seq u32 LE 분해 검증
-        assert_eq!(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), 1u32);
+        assert_eq!(
+            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            1u32
+        );
         // (6) _pad 반드시 0 (D-13 wire marker 일관)
         assert_eq!(bytes[7], 0u8, "_pad 옥텟 0 (alignment 보장)");
     }

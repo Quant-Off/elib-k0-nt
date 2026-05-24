@@ -74,7 +74,9 @@ mod tests {
     // 컴파일-타임 ABI 가드 (Plan 06-02 GREEN 이 이 잠금을 통과해야 함)
     const _: () = assert!(size_of::<StatusEntry>() == STATUS_ENTRY_SIZE);
     const _: () = assert!(size_of::<EnrollEventLocal>() == ENROLL_EVENT_SIZE);
-    const _: () = assert!(GAP_STATUS_LEN == GAP_STATUS_HEADER_LEN + GAP_STATUS_ENTRIES_LEN + GAP_STATUS_AUDIT_LEN);
+    const _: () = assert!(
+        GAP_STATUS_LEN == GAP_STATUS_HEADER_LEN + GAP_STATUS_ENTRIES_LEN + GAP_STATUS_AUDIT_LEN
+    );
     const _: () = assert!(GAP_STATUS_ENTRIES_LEN == HSM_SLOT_MAX * STATUS_ENTRY_SIZE);
     const _: () = assert!(GAP_STATUS_AUDIT_LEN == AUDIT_RING_CAPACITY * ENROLL_EVENT_SIZE);
     const _: () = assert!(GAP_STATUS_LEN == 456);
@@ -106,7 +108,9 @@ mod tests {
     #[test]
     fn layout_header_8b() {
         // RED 단계 GREEN fill-in 시 staging[0..2]=written staging[2..4]=audit_written staging[4..8]=audit_total
-        todo!("Plan 06-02 GREEN fill-in — header 8 B (written u16 | audit_written u16 | audit_total u32 LE)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — header 8 B (written u16 | audit_written u16 | audit_total u32 LE)"
+        )
     }
 
     /// staging[8..72] StatusEntry 영역 layout — 8 × 8 B
@@ -133,16 +137,35 @@ mod tests {
             make_enroll_event(2, 1, 1, 6),
             make_enroll_event(3, 0xFE, 3, 6),
             // 나머지 29개는 Default::default() — GREEN fill-in 에서 채움
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(), EnrollEventLocal::default(),
-            EnrollEventLocal::default(), EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
+            EnrollEventLocal::default(),
         ];
         todo!("Plan 06-02 GREEN fill-in — staging[72..456] = [EnrollEvent; 32] byte-exact raw 12 B")
     }
@@ -167,11 +190,10 @@ mod tests {
     /// staging[72..72+12*audit_written] == wire payload[8..8+12*audit_written]
     #[test]
     fn syscall_wire_audit_equivalence() {
-        let _events = [
-            make_enroll_event(1, 0, 0, 0),
-            make_enroll_event(2, 1, 1, 6),
-        ];
-        todo!("Plan 06-02 GREEN fill-in — syscall audit[72..72+12*n] == wire payload[8..8+12*n] byte-exact")
+        let _events = [make_enroll_event(1, 0, 0, 0), make_enroll_event(2, 1, 1, 6)];
+        todo!(
+            "Plan 06-02 GREEN fill-in — syscall audit[72..72+12*n] == wire payload[8..8+12*n] byte-exact"
+        )
     }
 
     /// out_len < 456 시 Denied + AUDIT_RING enqueue 0 회 (audit-of-audit DoS 회귀 가드)
@@ -182,7 +204,9 @@ mod tests {
     #[test]
     fn buffer_too_small_no_audit() {
         let _short_buf_len: usize = 100; // < 456
-        todo!("Plan 06-02 GREEN fill-in — out_len < 456 시 Denied + AUDIT_RING delta = 0 회귀 (T-06-06)")
+        todo!(
+            "Plan 06-02 GREEN fill-in — out_len < 456 시 Denied + AUDIT_RING delta = 0 회귀 (T-06-06)"
+        )
     }
 
     /// AUDIT_READ_CAP 미보유 호출 시 audit_enqueue(0xFF, 2, 0, [0;4]) 1 회 + Denied
@@ -192,6 +216,8 @@ mod tests {
     #[test]
     fn cap_missing_audit_emitted() {
         let _expected_event = make_enroll_event(0, 0xFF, 2, 0);
-        todo!("Plan 06-02 GREEN fill-in — cap 미보유 시 audit_enqueue(slot=0xFF, result=2, bus_kind=0) + Denied 회귀")
+        todo!(
+            "Plan 06-02 GREEN fill-in — cap 미보유 시 audit_enqueue(slot=0xFF, result=2, bus_kind=0) + Denied 회귀"
+        )
     }
 }

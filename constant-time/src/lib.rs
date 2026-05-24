@@ -113,20 +113,32 @@ pub trait CtSelOps: Copy {
         *self = Self::select(self, other, choice);
     }
 
-    /// Conditionally swaps `a` and `b` if `choice == 1`.
+    /// `choice == 1` 인 경우 `a` 와 `b` 를 상수시간에 교환하는 함수입니다.
     ///
-    /// The temporary value is passed through `black_box` to prevent the
-    /// compiler from keeping it in registers or optimizing away the zeroing
-    /// (CWE-316 mitigation).
+    /// # Security Note
+    /// 임시 변수 `t` 는 `*a` 의 평문 사본을 일시적으로 보유합니다.
+    /// 함수 종료 시 `size_of::<Self>()` 바이트 전 영역을 volatile 0으로
+    /// 덮어쓴 뒤 `compiler_fence(SeqCst)`로 store reorder를 차단하여
+    /// CWE-316 (cleartext storage in memory)잔재를 방지합니다.
+    /// 추가로 `black_box(&mut t)`가 stack slot의 escape를 강제하여
+    /// 최적화기가 임시 변수를 레지스터 only로 유지하지 못하도록 합니다.
     #[inline]
     fn swap(a: &mut Self, b: &mut Self, choice: Choice) {
-        // Store original value of a
         let mut t: Self = *a;
+        let _ = core::hint::black_box(&mut t);
         a.assign(b, choice);
         b.assign(&t, choice);
-        // Prevent compiler from optimizing away the temporary or keeping
-        // sensitive data in registers after this function returns.
-        // black_box acts as an optimization barrier.
+        // SAFETY: `t`는 `Self: Copy + Sized`이며 함수 로컬 스택 슬롯에 존재
+        //         각 바이트에 대한 volatile write는 alias 없는 유일 포인터를 통해
+        //         수행되므로 race가 없고, write_volatile는 DCE 대상이 아님
+        let size = core::mem::size_of::<Self>();
+        let ptr = core::ptr::from_mut(&mut t).cast::<u8>();
+        for i in 0..size {
+            unsafe {
+                core::ptr::write_volatile(ptr.add(i), 0);
+            }
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         let _ = core::hint::black_box(&mut t);
     }
 }

@@ -94,8 +94,9 @@ impl Blake2b {
                 add_to_counter(self.t.expose_mut(), 128);
                 let block = load_block(self.buf.as_slice());
                 compress(self.h.expose_mut(), &block, *self.t.expose(), [0u64, 0u64]);
-                // 다음 블록 준비를 위해 버퍼와 임시 메시지 워드 명시적 소거
-                self.buf.zeroize();
+                // 다음 블록 준비를 위해 data 영역만 명시 소거: SecureBuffer 전체
+                // zeroize 는 len 까지 비워 재사용 OOB 를 일으키므로 data 만 영점화
+                self.buf.as_mut_slice().zeroize();
                 self.buf_len = 0;
                 drop(block); // [u64;16] block: Secret 으로 자동 소거
             }
@@ -154,6 +155,15 @@ impl Zeroize for Blake2b {
         self.h.zeroize();
         self.t.zeroize();
         self.buf.zeroize();
+        self.buf_len.zeroize();
+        self.hash_len.zeroize();
+    }
+}
+
+impl Drop for Blake2b {
+    #[inline]
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -236,7 +246,7 @@ fn load_block(bytes: &[u8]) -> Secret<[u64; 16]> {
 fn add_to_counter(t: &mut [u64; 2], n: u64) {
     let (new_t0, overflow) = t[0].overflowing_add(n);
     t[0] = new_t0;
-    if overflow {
-        t[1] = t[1].wrapping_add(1);
-    }
+    // bool을 u64로 캐스팅하여 branchless carry 적용
+    // (LLVM이 setcc로 직접 출력하며, 비밀 의존 jcc가 생성되지 않음)
+    t[1] = t[1].wrapping_add(overflow as u64);
 }

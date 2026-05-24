@@ -31,8 +31,7 @@ mod tests {
         let mut buf = [0xAAu8; 8];
         let _ = enumerate_mock(false, &mut buf);
         assert_eq!(
-            buf,
-            [0xAAu8; 8],
+            buf, [0xAAu8; 8],
             "버퍼가 변경됨 — capability 미보유 시 enumerate 가 출력에 어떤 흔적도 남기지 않아야 함"
         );
     }
@@ -45,9 +44,15 @@ mod tests {
         let (len_with_cap, err_with_cap) = enumerate_mock(true, &mut buf);
         let (len_without_cap, err_without_cap) = enumerate_mock(false, &mut buf);
 
-        assert_eq!(len_with_cap, len_without_cap, "length 필드가 cap 존재를 인코딩함");
+        assert_eq!(
+            len_with_cap, len_without_cap,
+            "length 필드가 cap 존재를 인코딩함"
+        );
         assert_eq!(len_with_cap, 0);
-        assert_ne!(err_with_cap, err_without_cap, "err 코드는 두 경로를 분리해야 함");
+        assert_ne!(
+            err_with_cap, err_without_cap,
+            "err 코드는 두 경로를 분리해야 함"
+        );
         assert_eq!(err_with_cap, 0);
         assert_eq!(err_without_cap, ERR_DENIED);
     }

@@ -21,20 +21,22 @@
 //! # Authors
 //! Q. T. Felix
 
-#[cfg(target_arch = "x86_64")]
+// MIRI 환경에서는 inline asm 미지원이므로 fallback 경로를 사용
+// (production 빌드에는 영향 없음 cfg(miri)는 miri 실행 시에만 활성)
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 mod x86_64;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 mod aarch64;
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 mod fallback;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 pub use x86_64::*;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub use aarch64::*;
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 pub use fallback::*;

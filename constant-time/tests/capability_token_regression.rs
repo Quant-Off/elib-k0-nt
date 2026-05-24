@@ -66,7 +66,10 @@ mod tests {
         // 만약 expected 가 0 이면(2^-64) 본 테스트는 그 한 번의 추출에 대해
         // retry-비교가 무의미해진다. 본 결정론적 시드(0x42 .. / 0x37 ..)에서는
         // 첫 8바이트가 0 이 아니라는 사실이 사전 검증되어 있으므로 보호 가드만 둠.
-        assert_ne!(expected, 0, "deterministic seed produced zero first token — pick a different seed");
+        assert_ne!(
+            expected, 0,
+            "deterministic seed produced zero first token — pick a different seed"
+        );
         assert_eq!(
             expected, observed,
             "big-endian decode contract drift: raw=0x{:016x} helper=0x{:016x}",
