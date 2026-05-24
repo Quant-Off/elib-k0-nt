@@ -42,7 +42,9 @@ else
     exit 1
 fi
 
-"${OBJDUMP[@]}" "${BIN}" > "${TMPDIR}/dump.s"
+CANON_LABEL_RE='s/^[0-9A-Fa-f]+[[:space:]]+(<[^>]+>:)$/\1/'
+
+"${OBJDUMP[@]}" "${BIN}" | sed -E "${CANON_LABEL_RE}" > "${TMPDIR}/dump.s"
 
 # 검사 대상 probe 심볼 (timing-CT 검사)
 PROBES_CT=(
@@ -86,6 +88,8 @@ esac
 
 fail=0
 
+MAX_SYMBOL_LINES=500
+
 # 단일 심볼 어셈블리 추출
 # 인자 3 (dump) 생략 시 기본 CT dump 사용 — zeroize dump 도 동일 awk 로 재사용.
 extract_symbol() {
@@ -93,12 +97,18 @@ extract_symbol() {
     local out="$2"
     local dump="${3:-${TMPDIR}/dump.s}"
     # macOS Mach-O 는 _접두사. ELF 는 그대로.
-    # 디스어셈블리에서 "<sym>:" 또는 "_sym>:" 형태로 라벨이 등장.
+    # 라벨은 주소-선행 "0000... <sym>:" 또는 주소-없음 "<sym>:" 양 형식 모두 대응.
     awk -v sym="${sym}" '
         $0 ~ ("(^|<|_)" sym ">:") { capturing = 1; print; next }
-        capturing && /^[A-Za-z0-9_]+ <.*>:$/ { capturing = 0 }
+        capturing && /^([0-9A-Fa-f]+[[:space:]]+)?<[^>]+>:$/ { capturing = 0 }
         capturing { print }
     ' "${dump}" > "${out}"
+    local n
+    n=$(wc -l < "${out}" | tr -d '[:space:]')
+    if [[ "${n}" -gt "${MAX_SYMBOL_LINES}" ]]; then
+        echo "    FAIL ${sym} — 추출 ${n}줄 > ${MAX_SYMBOL_LINES} 줄: 심볼 경계 탐지 회귀(extract_symbol regex 결함 의심)" >&2
+        fail=1
+    fi
 }
 
 check_no_branch() {
@@ -158,7 +168,7 @@ if [[ ! -x "${ZBIN}" ]]; then
     echo "    FAIL — zeroize probe 바이너리를 찾지 못함: ${ZBIN}"
     fail=1
 else
-    "${OBJDUMP[@]}" "${ZBIN}" > "${TMPDIR}/zdump.s"
+    "${OBJDUMP[@]}" "${ZBIN}" | sed -E "${CANON_LABEL_RE}" > "${TMPDIR}/zdump.s"
     for sym in "${PROBES_ZEROIZE[@]}"; do
         extract_symbol "${sym}" "${TMPDIR}/${sym}.s" "${TMPDIR}/zdump.s"
         if [[ ! -s "${TMPDIR}/${sym}.s" ]]; then
