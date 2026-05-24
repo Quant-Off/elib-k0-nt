@@ -66,7 +66,9 @@ impl<T> Secret<T> {
     pub fn expose_mut(&mut self) -> &mut T {
         &mut self.inner
     }
+}
 
+impl<T: Copy> Secret<T> {
     /// 내부 데이터를 추출하고 원본 메모리를 소거합니다.
     ///
     /// 데이터를 복사한 후 원본 메모리를 안전하게 소거하고,
@@ -75,9 +77,11 @@ impl<T> Secret<T> {
     /// # Security Note
     /// 반환된 값은 더 이상 `Secret`의 보호를 받지 않습니다.
     /// 사용 후 직접 소거해야 합니다.
+    /// `T: Copy` 바운드로 비-`Copy` 타입의 논리적 double-drop window 와
+    /// 내부 포인터 데이터 미소거 가능성을 컴파일타임에 차단합니다.
     #[inline]
     pub fn into_inner(mut self) -> T {
-        let inner = unsafe { ptr::read(&self.inner) };
+        let inner = self.inner;
 
         compiler_barrier();
         let size = mem::size_of::<T>();

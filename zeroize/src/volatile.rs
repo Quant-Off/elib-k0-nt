@@ -28,7 +28,11 @@ use core::ptr;
 /// - `value`: 쓸 값
 ///
 /// # Safety
-/// `dest`는 유효하고 정렬된 포인터여야 합니다.
+/// 호출자는 다음을 모두 보장해야 합니다
+/// - `dest`는 `size_of::<T>()` 바이트 동안 쓰기에 유효(valid for writes)해야 합니다
+/// - `dest`는 `T`에 대해 정렬(`align_of::<T>()` 배수)되어야 합니다
+/// - 쓰기 동안 다른 참조나 스레드가 동일 메모리를 동시 접근하지 않아야 합니다(aliasing 부재)
+/// - `dest`가 가리키는 기존 값이 `Drop`을 가진다면, 본 함수는 그 값을 drop하지 않고 덮어쓰므로 호출자가 책임집니다
 #[inline(always)]
 pub unsafe fn volatile_write<T: Copy>(dest: *mut T, value: T) {
     compiler_barrier();
@@ -49,7 +53,11 @@ pub unsafe fn volatile_write<T: Copy>(dest: *mut T, value: T) {
 /// - `count`: 설정할 바이트 수
 ///
 /// # Safety
-/// `dest`는 `count` 바이트 이상의 유효한 메모리를 가리켜야 합니다.
+/// 호출자는 다음을 모두 보장해야 합니다
+/// - `dest`부터 `count` 바이트가 단일 할당 객체 안에서 쓰기에 유효해야 합니다
+/// - `dest.add(i)`가 `0..count`의 모든 `i`에 대해 오버플로 없이 유효한 주소여야 합니다
+/// - `u8` 쓰기이므로 정렬 추가 요구는 없으나 `dest`는 널이 아니어야 합니다
+/// - 설정 동안 다른 참조나 스레드가 동일 영역을 동시 접근하지 않아야 합니다(aliasing 부재)
 #[inline(always)]
 pub unsafe fn volatile_set(dest: *mut u8, value: u8, count: usize) {
     compiler_barrier();
@@ -75,7 +83,11 @@ pub unsafe fn volatile_set(dest: *mut u8, value: u8, count: usize) {
 /// - `count`: 초기화할 바이트 수
 ///
 /// # Safety
-/// `dest`는 `count` 바이트 이상의 유효한 메모리를 가리켜야 합니다.
+/// 호출자는 다음을 모두 보장해야 합니다
+/// - `dest`부터 `count` 바이트가 단일 할당 객체 안에서 쓰기에 유효해야 합니다
+/// - `dest.add(i)`가 `0..count`의 모든 `i`에 대해 오버플로 없이 유효한 주소여야 합니다
+/// - `dest`는 널이 아니어야 합니다
+/// - 초기화 동안 다른 참조나 스레드가 동일 영역을 동시 접근하지 않아야 합니다(aliasing 부재)
 ///
 /// # Security Note
 /// 단일 0 덮어쓰기는 RAM 수준에서 충분한 보안을 제공합니다.
