@@ -54,6 +54,9 @@ PROBES_CT=(
 )
 # swap probe 는 별도 — volatile zero store 존재도 함께 확인
 PROBES_SWAP=(probe_swap_u64 probe_swap_u128)
+# zeroize probe 는 별도 크레이트(zeroize) 소속 — 별도 빌드/디스어셈블 후
+# volatile zero store + 메모리 배리어 fence 잔존을 함께 검증한다.
+PROBES_ZEROIZE=(probe_secret_drop probe_zeroize_flat)
 
 # 조건분기 명령 정규식 (arch 별)
 case "${ARCH}" in
@@ -63,6 +66,8 @@ case "${ARCH}" in
         BRANCH_RE='\b(j(a|ae|b|be|c|cxz|e|ecxz|g|ge|l|le|na|nae|nb|nbe|nc|ne|ng|nge|nl|nle|no|np|ns|nz|o|p|pe|po|rcxz|s|z)|loop[nz]?e?)\b'
         # x86_64 zero store: movb $0,(mem) / movX $0,(mem) / xor reg,reg(=0).
         ZERO_STORE_RE='\b(mov[bwlq]?[[:space:]]+\$0x?0+,|mov[[:space:]]+(byte|BYTE)[[:space:]]+(ptr|PTR)[^,]*,[[:space:]]*0|xor[bwlq]?[[:space:]]+%[a-z0-9]+,[[:space:]]*%[a-z0-9]+)'
+        # x86_64 메모리 배리어 fence: mfence (zeroize 경로 생존 검증).
+        FENCE_RE='\bmfence\b'
         ;;
     aarch64)
         # 조건분기: b.cond (b.eq, b.ne, …), cbz, cbnz, tbz, tbnz
@@ -70,6 +75,8 @@ case "${ARCH}" in
         BRANCH_RE='\b(b\.[a-z]+|cbz|cbnz|tbz|tbnz)\b'
         # aarch64 zero store: strb wzr / str xzr / stp xzr,xzr (LLVM 합치기 패턴).
         ZERO_STORE_RE='\b(strb?|str|stp)[[:space:]]+(wzr|xzr)\b'
+        # aarch64 메모리 배리어 fence: dmb / dsb (zeroize 경로 생존 검증).
+        FENCE_RE='\b(dmb|dsb)\b'
         ;;
     *)
         echo "FAIL: 미지원 호스트 아키텍처: ${ARCH}" >&2
@@ -80,16 +87,18 @@ esac
 fail=0
 
 # 단일 심볼 어셈블리 추출
+# 인자 3 (dump) 생략 시 기본 CT dump 사용 — zeroize dump 도 동일 awk 로 재사용.
 extract_symbol() {
     local sym="$1"
     local out="$2"
+    local dump="${3:-${TMPDIR}/dump.s}"
     # macOS Mach-O 는 _접두사. ELF 는 그대로.
     # 디스어셈블리에서 "<sym>:" 또는 "_sym>:" 형태로 라벨이 등장.
     awk -v sym="${sym}" '
         $0 ~ ("(^|<|_)" sym ">:") { capturing = 1; print; next }
         capturing && /^[A-Za-z0-9_]+ <.*>:$/ { capturing = 0 }
         capturing { print }
-    ' "${TMPDIR}/dump.s" > "${out}"
+    ' "${dump}" > "${out}"
 }
 
 check_no_branch() {
@@ -130,10 +139,42 @@ for sym in "${PROBES_SWAP[@]}"; do
         echo "    FAIL ${sym} — volatile zero store 부재 (CWE-316 회귀 의심)"
         fail=1
     else
-        cnt=$(grep -cE "${ZERO_STORE_RE}" "${TMPDIR}/${sym}.s" || true)
+        cnt=$(grep -v '^#' "${TMPDIR}/${sym}.s" | grep -cE "${ZERO_STORE_RE}" || true)
         echo "    PASS ${sym} — zero store ${cnt} 건 잔존"
     fi
 done
+
+# zeroize probe (별도 크레이트 — 별도 release 빌드 + 별도 바이너리 디스어셈블)
+# zeroize/examples/zeroize_asm_probes.rs 는 constant-time 이 아닌 zeroize 소속이라
+# 별도로 release 빌드하고 별도 바이너리를 디스어셈블한다. zero-fill 루프(컴파일타임
+# 상수 종료조건)를 가지므로 swap 과 동일하게 분기 검사는 적용하지 않고, volatile
+# zero store (ZERO_STORE_RE) AND 메모리 배리어 fence (FENCE_RE) 잔존을 둘 다 검증한다.
+# 한쪽이라도 부재면 DCE 회귀(CWE-14/316) 로 판정한다.
+echo ">> zeroize probe (별도 크레이트 — zero store + fence 잔존 검증)"
+cargo build --release -p zeroize --example zeroize_asm_probes --target "${HOST_TRIPLE}" 1>&2
+
+ZBIN="../target/${HOST_TRIPLE}/release/examples/zeroize_asm_probes"
+if [[ ! -x "${ZBIN}" ]]; then
+    echo "    FAIL — zeroize probe 바이너리를 찾지 못함: ${ZBIN}"
+    fail=1
+else
+    "${OBJDUMP[@]}" "${ZBIN}" > "${TMPDIR}/zdump.s"
+    for sym in "${PROBES_ZEROIZE[@]}"; do
+        extract_symbol "${sym}" "${TMPDIR}/${sym}.s" "${TMPDIR}/zdump.s"
+        if [[ ! -s "${TMPDIR}/${sym}.s" ]]; then
+            echo "    SKIP ${sym} — 심볼 미발견"
+            continue
+        fi
+        store_cnt=$(grep -v '^#' "${TMPDIR}/${sym}.s" | grep -cE "${ZERO_STORE_RE}" || true)
+        fence_cnt=$(grep -v '^#' "${TMPDIR}/${sym}.s" | grep -cE "${FENCE_RE}" || true)
+        if [[ "${store_cnt}" -eq 0 || "${fence_cnt}" -eq 0 ]]; then
+            echo "    FAIL ${sym} — zero store ${store_cnt} 건 / fence ${fence_cnt} 건 (DCE 회귀 의심: store·fence 모두 필요)"
+            fail=1
+        else
+            echo "    PASS ${sym} — zero store ${store_cnt} 건 + fence ${fence_cnt} 건 잔존"
+        fi
+    done
+fi
 
 if [[ "${fail}" -ne 0 ]]; then
     echo "RESULT: FAIL — 상수시간/메모리 소거 회귀 발견"
