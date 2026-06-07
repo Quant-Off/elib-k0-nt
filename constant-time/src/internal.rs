@@ -30,6 +30,17 @@
 // x86_64
 //
 
+/// 조건이 0 이 아니면 a, 0 이면 b 를 상수시간에 선택하는 함수입니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
+///
+/// # Safety
+/// test 와 cmovnz 명령만 사용하며 nomem 옵션으로 메모리에 접근하지 않고
+/// nostack 옵션으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고
+/// 비밀 의존 분기가 없으므로 상수시간 성질이 유지됩니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -48,6 +59,17 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     result
 }
 
+/// 조건이 0 이 아니면 a, 0 이면 b 를 64비트 폭으로 상수시간에 선택하는 함수입니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
+///
+/// # Safety
+/// test 와 cmovnz 명령만 사용하며 nomem 으로 메모리에 접근하지 않고 nostack
+/// 으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고 비밀 의존
+/// 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -66,6 +88,16 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     result
 }
 
+/// 두 값이 같으면 1, 다르면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
+///
+/// # Safety
+/// cmp 와 sete 명령만 사용하며 nomem 으로 메모리에 접근하지 않고 nostack
+/// 으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고 비밀 의존
+/// 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -84,6 +116,16 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
     result
 }
 
+/// 두 값이 같으면 1, 다르면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
+///
+/// # Safety
+/// cmp 와 sete 명령만 사용하며 nomem 으로 메모리에 접근하지 않고 nostack
+/// 으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고 비밀 의존
+/// 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -102,7 +144,17 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
     result
 }
 
-// seta 는 CF 가 0 이고 ZF 가 0 일 때 a 가 b 보다 큼을 뜻합니다 (부호 없음)
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
+///
+/// # Safety
+/// cmp 와 seta 명령만 사용합니다. seta 는 CF 가 0 이고 ZF 가 0 일 때 1 을
+/// 기록하므로 a 가 b 보다 큰 부호 없는 비교 결과를 나타냅니다. nomem 으로
+/// 메모리에 접근하지 않고 nostack 으로 스택을 사용하지 않으며 피연산자는
+/// 레지스터 전용이고 비밀 의존 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -121,6 +173,17 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     result
 }
 
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
+///
+/// # Safety
+/// cmp 와 seta 명령만 사용합니다. seta 는 CF 가 0 이고 ZF 가 0 일 때 1 을
+/// 기록하므로 a 가 b 보다 큰 부호 없는 비교 결과를 나타냅니다. nomem 으로
+/// 메모리에 접근하지 않고 nostack 으로 스택을 사용하지 않으며 피연산자는
+/// 레지스터 전용이고 비밀 의존 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -139,8 +202,19 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
     result
 }
 
-// setg 는 ZF 가 0 이고 SF 가 OF 와 같을 때 a 가 b 보다 큼을 뜻합니다 (부호 있음)
-// 더 작은 부호 있는 타입은 호출자가 i64 로 부호 확장합니다.
+/// 부호 있는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 더 작은 부호 있는 타입은 호출자가 i64 로 부호 확장한 뒤 전달합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 있는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 있는 값입니다
+///
+/// # Safety
+/// cmp 와 setg 명령만 사용합니다. setg 는 ZF 가 0 이고 SF 가 OF 와 같을 때
+/// 1 을 기록하므로 a 가 b 보다 큰 부호 있는 비교 결과를 나타냅니다. nomem
+/// 으로 메모리에 접근하지 않고 nostack 으로 스택을 사용하지 않으며 피연산자는
+/// 레지스터 전용이고 비밀 의존 분기가 없습니다.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[must_use]
 #[inline]
@@ -165,6 +239,14 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 // 확장됩니다.
 //
 
+/// 조건이 0 이 아니면 a, 0 이면 b 를 상수시간에 선택하는 함수입니다.
+///
+/// 내부적으로 ct_sel64 에 위임하며 인자를 64비트로 확장한 뒤 결과를 32비트로 줄입니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -172,6 +254,17 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     ct_sel64(cond, a as u64, b as u64) as u32
 }
 
+/// 조건이 0 이 아니면 a, 0 이면 b 를 64비트 폭으로 상수시간에 선택하는 함수입니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
+///
+/// # Safety
+/// cmp 와 csel 명령만 사용하며 nomem 으로 메모리에 접근하지 않고 nostack
+/// 으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고 비밀 의존
+/// 분기가 없으므로 상수시간 성질이 유지됩니다.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -191,6 +284,13 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     result
 }
 
+/// 두 값이 같으면 1, 다르면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 내부적으로 ct_eq64 에 위임하며 인자를 64비트로 확장한 뒤 비교합니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -198,6 +298,16 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
     ct_eq64(a as u64, b as u64)
 }
 
+/// 두 값이 같으면 1, 다르면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
+///
+/// # Safety
+/// cmp 와 cset eq 명령만 사용하며 nomem 으로 메모리에 접근하지 않고 nostack
+/// 으로 스택을 사용하지 않습니다. 피연산자는 레지스터 전용이고 비밀 의존
+/// 분기가 없습니다.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -216,7 +326,13 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
     result as u8
 }
 
-// cset hi 는 C 가 1 이고 Z 가 0 일 때 a 가 b 보다 큼을 뜻합니다 (부호 없음)
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 내부적으로 ct_gt_u64 에 위임하며 인자를 64비트로 확장한 뒤 비교합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -224,6 +340,17 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     ct_gt_u64(a as u64, b as u64)
 }
 
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
+///
+/// # Safety
+/// cmp 와 cset hi 명령만 사용합니다. cset hi 는 C 가 1 이고 Z 가 0 일 때 1 을
+/// 기록하므로 a 가 b 보다 큰 부호 없는 비교 결과를 나타냅니다. nomem 으로
+/// 메모리에 접근하지 않고 nostack 으로 스택을 사용하지 않으며 피연산자는
+/// 레지스터 전용이고 비밀 의존 분기가 없습니다.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -242,7 +369,17 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
     result as u8
 }
 
-// cset gt 는 Z 가 0 이고 N 이 V 와 같을 때 a 가 b 보다 큼을 뜻합니다 (부호 있음)
+/// 부호 있는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 있는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 있는 값입니다
+///
+/// # Safety
+/// cmp 와 cset gt 명령만 사용합니다. cset gt 는 Z 가 0 이고 N 이 V 와 같을 때
+/// 1 을 기록하므로 a 가 b 보다 큰 부호 있는 비교 결과를 나타냅니다. nomem
+/// 으로 메모리에 접근하지 않고 nostack 으로 스택을 사용하지 않으며 피연산자는
+/// 레지스터 전용이고 비밀 의존 분기가 없습니다.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[must_use]
 #[inline]
@@ -283,6 +420,16 @@ const _: () = {
     let _ = CT_FALLBACK_WARNING;
 };
 
+/// 조건 바이트로부터 상수시간 비트 마스크를 생성하는 함수입니다.
+///
+/// 조건이 0 이 아니면 모든 비트가 1 인 마스크를, 0 이면 0 마스크를 반환합니다.
+///
+/// # Arguments
+/// - `cond`: 마스크 생성의 기준이 되는 조건 바이트입니다
+///
+/// # Security Note
+/// 이 fallback 경로는 `core::hint::black_box` 에 의존하는 best-effort
+/// 구현이므로 상수시간 성질이 하드웨어 수준으로 보장되지는 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[inline(never)]
 pub(crate) fn ct_mask(cond: u8) -> u64 {
@@ -290,6 +437,18 @@ pub(crate) fn ct_mask(cond: u8) -> u64 {
     core::hint::black_box(((c | c.wrapping_neg()) >> 63).wrapping_neg())
 }
 
+/// 조건이 0 이 아니면 a, 0 이면 b 를 상수시간에 선택하는 함수입니다.
+///
+/// 내부적으로 ct_sel64 에 위임합니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
@@ -297,6 +456,17 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
     ct_sel64(cond, a as u64, b as u64) as u32
 }
 
+/// 마스크 연산으로 a 또는 b 를 64비트 폭으로 상수시간에 선택하는 함수입니다.
+///
+/// # Arguments
+/// - `cond`: 0 이 아니면 a 를, 0 이면 b 를 선택하는 조건 바이트입니다
+/// - `a`: 조건이 참일 때 반환되는 값입니다
+/// - `b`: 조건이 거짓일 때 반환되는 값입니다
+///
+/// # Security Note
+/// 입력과 중간값을 `core::hint::black_box` 로 감싸 최적화를 억제하는
+/// best-effort fallback 이므로 상수시간 성질이 하드웨어 수준으로 보장되지
+/// 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
@@ -307,6 +477,17 @@ pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     core::hint::black_box((m & a) | ((!m) & b))
 }
 
+/// 두 값이 같으면 1, 다르면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 내부적으로 ct_eq64 에 위임합니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
@@ -314,9 +495,18 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
     ct_eq64(a as u64, b as u64)
 }
 
-// XOR 결과는 두 값이 같을 때만 0 이 되며 OR 시프트를 연쇄 적용해 모든
-// 비트를 최하위 비트로 모읍니다.
-// 두 값이 같으면 1, 아니면 0 을 반환합니다.
+/// 두 값이 같으면 1, 다르면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// XOR 결과가 두 값이 같을 때만 0 이 되는 성질을 이용합니다. OR 시프트를
+/// 연쇄 적용해 모든 비트를 최하위 비트로 모은 뒤 마스크로 결과를 만듭니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 값입니다
+/// - `b`: 비교 대상 두 번째 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
@@ -334,8 +524,18 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
     core::hint::black_box((!nonzero & 1) as u8)
 }
 
-// 빌림 검출 방식입니다. b 에서 a 를 빼면 a 가 b 보다 클 때 언더플로가 발생합니다 (부호 없음).
-// 그 빌림은 64비트로 확장된 결과의 비트 32 로 전파됩니다.
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// b 에서 a 를 뺄 때 a 가 b 보다 크면 언더플로가 발생하며 그 빌림이 64비트로
+/// 확장된 결과의 비트 32 로 전파되는 성질을 이용합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
@@ -346,6 +546,18 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     core::hint::black_box((diff >> 32) as u8 & 1)
 }
 
+/// 부호 없는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 64비트 폭으로 상수시간에 반환하는 함수입니다.
+///
+/// 32비트 플랫폼에서 비상수시간 라이브러리 호출을 피하기 위해 128비트 산술
+/// 대신 반워드 비교로 구성합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline]
@@ -365,10 +577,19 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
     core::hint::black_box(hi_gt | (hi_eq & lo_gt))
 }
 
-// 부호 비트 분해를 이용한 부호 있는 대소 비교입니다 (분기 없음).
-// a 가 b 보다 큰 조건 (부호 있음)은 다음과 같습니다.
-//   같은 부호이면서 부호 없는 비교로 a 가 b 보다 큰 경우 (2의 보수 같은 부호 비교)
-//   또는 a 가 음이 아니면서 b 가 음수인 경우입니다.
+/// 부호 있는 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 부호 비트를 분해하여 분기 없이 계산합니다. 같은 부호일 때는 부호 없는
+/// 대소 비교 결과를 사용하고 a 가 음이 아니면서 b 가 음수인 경우를 따로
+/// 더합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 있는 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 있는 값입니다
+///
+/// # Security Note
+/// black_box 기반 best-effort fallback 이므로 상수시간 성질이 하드웨어
+/// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
 #[inline(never)] // Prevent inlining to reduce optimization opportunities
@@ -390,6 +611,13 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 // 위의 아키텍처별 64비트 함수 위에 구성됩니다.
 //
 
+/// 128비트 두 값이 같으면 1, 다르면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 상위 64비트와 하위 64비트를 각각 ct_eq64 로 비교한 결과를 결합합니다.
+///
+/// # Arguments
+/// - `a`: 비교 대상 첫 번째 128비트 값입니다
+/// - `b`: 비교 대상 두 번째 128비트 값입니다
 #[must_use]
 #[inline]
 pub(crate) fn ct_eq128(a: u128, b: u128) -> u8 {
@@ -397,6 +625,13 @@ pub(crate) fn ct_eq128(a: u128, b: u128) -> u8 {
     ct_eq64((a >> 64) as u64, (b >> 64) as u64) & ct_eq64(a as u64, b as u64)
 }
 
+/// 부호 없는 128비트 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 64비트 프리미티브 위에 구성되며 상위 절반과 하위 절반을 단계적으로 비교합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 없는 128비트 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 없는 128비트 값입니다
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_u128(a: u128, b: u128) -> u8 {
@@ -408,6 +643,13 @@ pub(crate) fn ct_gt_u128(a: u128, b: u128) -> u8 {
     hi_gt | (hi_eq & lo_gt)
 }
 
+/// 부호 있는 128비트 두 값에 대해 a 가 b 보다 크면 1, 아니면 0 을 상수시간에 반환하는 함수입니다.
+///
+/// 64비트 프리미티브 위에 구성되며 부호 비트를 분해해 분기 없이 계산합니다.
+///
+/// # Arguments
+/// - `a`: 큰지 비교할 첫 번째 부호 있는 128비트 값입니다
+/// - `b`: 기준이 되는 두 번째 부호 있는 128비트 값입니다
 #[must_use]
 #[inline]
 pub(crate) fn ct_gt_i128(a: i128, b: i128) -> u8 {
