@@ -7,7 +7,7 @@
 //! 아키텍처에서는 `black_box` 기반 best-effort fallback으로 동작합니다.
 //!
 //! # Features
-//! - `Choice`: 항상 0 또는 1 값을 갖는 상수-시간 불리언이며 비트 연산으로 조합됩니다
+//! - `Choice`: 항상 0 또는 1 값을 갖는 상수-시간 bool이며 비트 연산으로 조합됩니다
 //! - `CtSelOps`: 조건에 따라 두 값 중 하나를 선택하고 대입과 교환을 파생합니다
 //! - `CtEqOps`: 두 값의 동등 여부를 상수-시간에 판정합니다
 //! - `CtGreeter`: 두 값의 대소를 상수-시간에 판정합니다
@@ -34,7 +34,7 @@ use internal::*;
 // Choice
 //
 
-/// 항상 0 또는 1 값을 갖는 상수-시간 불리언을 나타내는 구조체입니다.
+/// 항상 0 또는 1 값을 갖는 상수-시간 bool을 나타내는 구조체입니다.
 ///
 /// 비트 연산 `&`, `|`, `^`, `!`이 0 또는 1 불변을 정규화 없이 보존합니다.
 ///
@@ -422,13 +422,13 @@ pub trait CtLess: CtEqOps + CtGreeter {
 }
 
 // 일괄 구현으로 CtEqOps와 CtGreeter를 모두 만족하는 타입은 검증된 상수-시간
-// 기본 구현으로 CtLess를 자동으로 얻습니다
+// 기본 구현으로 CtLess를 자동으로 얻습니다.
 impl<T: CtEqOps + CtGreeter> CtLess for T {}
 
 //
 // 계층-1 결정적 값 동등성 테스트 (CTSEC-01, CONTEXT D-03)
 //
-// 값 동등성만 증명하며 분기 부재는 계층-2 디스어셈블 게이트(check_ct_asm.sh) 소관입니다
+// 값 동등성만 증명하며 분기 부재는 계층-2 디스어셈블 게이트(check_ct_asm.sh) 소관입니다.
 //
 #[cfg(test)]
 mod tests {
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn ct_select_matches_branchful() {
-        // select(a, b, choice)는 choice가 1이면 b, 0이면 a를 반환합니다
+        // select(a, b, choice)는 choice가 1이면 b, 0이면 a를 반환
         fn check<T: CtSelOps + PartialEq + core::fmt::Debug>(a: T, b: T) {
             let one = Choice::from_u8(1);
             let zero = Choice::from_u8(0);
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn ct_gt_lt_boundary() {
-        // gt는 self가 other보다 큼, lt는 self가 other보다 작음을 분기형과 대조합니다
+        // gt는 self가 other보다 큼, lt는 self가 other보다 작음을 분기형과 대조
         for &a in &U32_SAMPLES {
             for &b in &U32_SAMPLES {
                 assert_eq!(

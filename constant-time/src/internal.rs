@@ -237,7 +237,7 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 //
 // aarch64
 // 모든 연산을 64비트로 수행하며 32비트 타입은 호출 전에 영 확장 또는 부호
-// 확장합니다
+// 확장합니다.
 //
 
 /// 조건이 0이 아니면 a, 0이면 b를 상수-시간에 선택하는 함수입니다.
@@ -470,7 +470,7 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
 /// 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인 방지
 pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
@@ -518,9 +518,9 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
     let s = core::hint::black_box(diff | diff.wrapping_shr(32));
     let s = core::hint::black_box(s | s.wrapping_shr(16));
     let s = core::hint::black_box(s | s.wrapping_shr(8));
-    // `s as u8`은 `diff`에 비트가 하나라도 설정되어 있으면 0이 아닙니다 (즉 a가 b와 다름)
+    // `s as u8`은 `diff`에 비트가 하나라도 설정되어 있으면 0이 아님(즉 a가 b와 다름)
     let byte = core::hint::black_box(s as u8);
-    // `ct_mask`는 `byte`가 0이 아니면 0xFF..FF를, 0이면 0을 만듭니다 (a와 b의 동등 여부)
+    // `ct_mask`는 `byte`가 0이 아니면 0xFF..FF를, 0이면 0을 만듦(a와 b의 동등 여부)
     let nonzero = ct_mask(byte);
     core::hint::black_box((!nonzero & 1) as u8)
 }
@@ -539,7 +539,7 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
 /// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인 방지
 pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
@@ -564,8 +564,8 @@ pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
 #[inline]
 pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
     // 32비트 플랫폼에서 비상수-시간 라이브러리 호출로 컴파일될 수 있는
-    // 128비트 산술을 피하고 대신 반워드 비교를 사용합니다.
-    // a가 b보다 큰 조건은 `a_hi`가 `b_hi`보다 크거나 `a_hi`와 `b_hi`가 같고 `a_lo`가 `b_lo`보다 큰 경우입니다.
+    // 128비트 산술을 피하고 대신 반워드 비교 사용
+    // a가 b보다 큰 조건은 `a_hi`가 `b_hi`보다 크거나 `a_hi`와 `b_hi`가 같고 `a_lo`가 `b_lo`보다 큰 경우임
     let a_hi = (a >> 32) as u32;
     let a_lo = a as u32;
     let b_hi = (b >> 32) as u32;
@@ -599,11 +599,11 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
     let b = core::hint::black_box(b);
     let a_u = a as u64;
     let b_u = b as u64;
-    let a_msb = core::hint::black_box((a_u >> 63) as u8); // a가 음수면 1입니다
-    let b_msb = core::hint::black_box((b_u >> 63) as u8); // b가 음수면 1입니다
+    let a_msb = core::hint::black_box((a_u >> 63) as u8); // a가 음수면 1
+    let b_msb = core::hint::black_box((b_u >> 63) as u8); // b가 음수면 1
     let u_gt = ct_gt_u64(a_u, b_u);
-    let same_sign = core::hint::black_box((a_msb ^ b_msb) ^ 1); // 두 부호가 같을 때만 1입니다
-    let not_a_msb = core::hint::black_box(a_msb ^ 1); // a가 0 이상일 때만 1입니다
+    let same_sign = core::hint::black_box((a_msb ^ b_msb) ^ 1); // 두 부호가 같을 때만 1
+    let not_a_msb = core::hint::black_box(a_msb ^ 1); // a가 0 이상일 때만 1
     core::hint::black_box((same_sign & u_gt) | (not_a_msb & b_msb))
 }
 
@@ -637,7 +637,7 @@ pub(crate) fn ct_eq128(a: u128, b: u128) -> u8 {
 #[inline]
 pub(crate) fn ct_gt_u128(a: u128, b: u128) -> u8 {
     // a가 b보다 큰 조건은 상위 절반이 다르고 `a_hi`가 `b_hi`보다 크거나
-    // 상위 절반이 같고 `a_lo`가 `b_lo`보다 큰 경우입니다
+    // 상위 절반이 같고 `a_lo`가 `b_lo`보다 큰 경우임
     let hi_gt = ct_gt_u64((a >> 64) as u64, (b >> 64) as u64);
     let hi_eq = ct_eq64((a >> 64) as u64, (b >> 64) as u64);
     let lo_gt = ct_gt_u64(a as u64, b as u64);
