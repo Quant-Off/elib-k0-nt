@@ -141,7 +141,7 @@ impl Not for Choice {
 /// 조건에 따라 두 값 중 하나를 상수-시간에 선택하는 연산을 정의하는 트레이트입니다.
 ///
 /// `assign`과 `swap`은 `select`에서 파생됩니다.
-pub trait CtSelOps: Copy {
+pub trait CtSelOps: Copy + private::Sealed {
     /// `choice`가 1이면 `b`를, 0이면 `a`를 상수-시간에 선택하여 반환하는 함수입니다.
     ///
     /// # Arguments
@@ -171,7 +171,9 @@ pub trait CtSelOps: Copy {
     /// 임시 변수 `t`는 `Self: Copy + Sized`이며 함수 로컬 스택 슬롯에만
     /// 존재합니다. 각 바이트의 volatile write는 별칭 없는 유일 포인터로
     /// 수행되므로 경합이 없고 `write_volatile`는 죽은 코드 제거 대상이
-    /// 아닙니다.
+    /// 아닙니다. 또한 `CtSelOps`는 `private::Sealed`로 봉인되어 구현자가
+    /// 고정폭 정수로 제한되므로 all-zero 비트 패턴이 항상 `Self`의 유효한
+    /// 값이며 volatile 0 덮어쓰기가 invalid value를 만들지 않습니다.
     ///
     /// # Security Note
     /// 임시 변수 `t`는 `*a`의 평문 사본을 일시적으로 보유합니다. 함수 종료 시
@@ -245,6 +247,22 @@ impl CtSelOps for i128 {
         u128::select(&(*a as u128), &(*b as u128), choice) as i128
     }
 }
+
+mod private {
+    pub trait Sealed {}
+}
+
+macro_rules! impl_sealed {
+    ($($t:ty),+) => {
+        $(
+            impl private::Sealed for $t {}
+        )+
+    };
+}
+
+impl_sealed!(
+    u8, u16, u32, i8, i16, i32, u64, i64, usize, isize, u128, i128
+);
 
 //
 // CtEqOps 트레이트 (eq, ne)
