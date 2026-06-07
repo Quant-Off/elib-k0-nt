@@ -14,7 +14,7 @@
 src/volatile.rs
 ```
 
-`ptr::write_volatile`은 Rust 및 LLVM에서 제거 불가(cannot be elided) 로 지정된 연산입니다. 컴파일러는 volatile 접근을 관측 가능한 부수 효과(observable side effect)로 간주하므로 DSE을 적용하지 않습니다.
+`ptr::write_volatile`은 Rust 및 LLVM에서 제거 불가(cannot be elided)로 지정된 연산입니다. 컴파일러는 volatile 접근을 관측 가능한 부수 효과(observable side effect)로 간주하므로 DSE을 적용하지 않습니다.
 
 - `volatile_write<T>`: 단일 값에 대한 volatile 쓰기
 - `volatile_set`: 바이트 배열 전체를 순회하며 바이트 단위로 volatile 쓰기
@@ -32,8 +32,8 @@ volatile 쓰기만으로는 컴파일러가 쓰기 순서를 재배치(reorder) 
 
 | 아키텍처     | 구현                                           |
 |----------|----------------------------------------------|
-| x86_64   | `asm!("")` — 빈 인라인 어셈블리로 컴파일러 재배치 경계 설정      |
-| AArch64  | 동일                                           |
+| x86_64   | 빈(empty) 인-라인 어셈블리                           |
+| AArch64  | x86_64와 동일                                   |
 | fallback | `core::sync::atomic::compiler_fence(SeqCst)` |
 
 소거 연산의 앞뒤 양쪽에 `compiler_barrier()`가 삽입되어 소거 코드가 소거 범위 밖으로 이동하지 않음을 보장합니다.
@@ -67,13 +67,13 @@ src/barrier/{x86_64, aarch64, fallback}.rs
 `zeroize_flat`, `Secret::drop`, `volatile_set` 모두 동일한 순서를 따릅니다.
 
 ```
-1. compiler_barrier()          — 컴파일러: 소거 이전 연산을 소거 블록 뒤로 이동 금지
-2. write_volatile(ptr+i, 0)    — 실제 소거, 컴파일러 제거 불가
+1. compiler_barrier()       -> 컴파일러: 소거 이전 연산을 소거 블록 뒤로 이동 금지
+2. write_volatile(ptr+i, 0) -> 실제 소거, 컴파일러 제거 불가
    (바이트 단위 순회)
-3. compiler_barrier()          — 컴파일러: 소거 이후 연산을 소거 블록 앞으로 이동 금지
-4. atomic_compiler_fence()     — SeqCst 컴파일러 수준 추가 차단
-5. memory_barrier()            — CPU: Out-of-Order 실행 및 캐시 지연 쓰기 플러시
-6. black_box(ptr)              — 포인터를 레지스터에 로드하여 최적화 최종 차단
+3. compiler_barrier()       -> 컴파일러: 소거 이후 연산을 소거 블록 앞으로 이동 금지
+4. atomic_compiler_fence()  -> SeqCst 컴파일러 수준 추가 차단
+5. memory_barrier()         -> CPU: Out-of-Order 실행 및 캐시 지연 쓰기 플러시
+6. black_box(ptr)           -> 포인터를 레지스터에 로드하여 최적화 최종 차단
 ```
 
 ---

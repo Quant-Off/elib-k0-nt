@@ -3,4 +3,5 @@ target/
 dist/
 *.iso
 Cargo.lock
+CLAUDE.md
 .planning/
