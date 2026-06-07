@@ -469,7 +469,7 @@ pub(crate) fn ct_sel32(cond: u8, a: u32, b: u32) -> u32 {
 /// 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // Prevent inlining to reduce optimization opportunities
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
 pub(crate) fn ct_sel64(cond: u8, a: u64, b: u64) -> u64 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
@@ -509,7 +509,7 @@ pub(crate) fn ct_eq32(a: u32, b: u32) -> u8 {
 /// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // Prevent inlining to reduce optimization opportunities
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
 pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
@@ -538,7 +538,7 @@ pub(crate) fn ct_eq64(a: u64, b: u64) -> u8 {
 /// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // Prevent inlining to reduce optimization opportunities
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
 pub(crate) fn ct_gt_u32(a: u32, b: u32) -> u8 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
@@ -592,17 +592,17 @@ pub(crate) fn ct_gt_u64(a: u64, b: u64) -> u8 {
 /// 수준으로 보장되지 않습니다.
 #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use]
-#[inline(never)] // Prevent inlining to reduce optimization opportunities
+#[inline(never)] // 최적화 기회를 줄이기 위해 인라인을 방지합니다
 pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
     let a = core::hint::black_box(a);
     let b = core::hint::black_box(b);
     let a_u = a as u64;
     let b_u = b as u64;
-    let a_msb = core::hint::black_box((a_u >> 63) as u8); // 1 if a < 0
-    let b_msb = core::hint::black_box((b_u >> 63) as u8); // 1 if b < 0
+    let a_msb = core::hint::black_box((a_u >> 63) as u8); // a 가 음수면 1 입니다
+    let b_msb = core::hint::black_box((b_u >> 63) as u8); // b 가 음수면 1 입니다
     let u_gt = ct_gt_u64(a_u, b_u);
-    let same_sign = core::hint::black_box((a_msb ^ b_msb) ^ 1); // 1 iff signs are equal
-    let not_a_msb = core::hint::black_box(a_msb ^ 1); // 1 iff a >= 0
+    let same_sign = core::hint::black_box((a_msb ^ b_msb) ^ 1); // 두 부호가 같을 때만 1 입니다
+    let not_a_msb = core::hint::black_box(a_msb ^ 1); // a 가 0 이상일 때만 1 입니다
     core::hint::black_box((same_sign & u_gt) | (not_a_msb & b_msb))
 }
 
