@@ -10,13 +10,28 @@
 
 구현된 상수-시간 로직에 존재하는 문제와 해결을 기술합니다.
 
-### Fallback 경로의 `black_box` 의존 문제 (예정)
+### Fallback 경로의 `black_box` 의존 문제 (해결)
 
 `black_box`는 Rust 공식적으로 ["최적화 배리어를 보장하지 않는다"](https://internals.rust-lang.org/t/optimization-barriers-suitable-for-cryptographic-use/21047)고 못박혀 있습니다. 컴파일러는 `black_box`를 통째로 무시할 자유가 있습니다만, `ct_sel64`, `ct_eq64`, `ct_mask`([internal.rs](src/internal.rs))가 아무리 `(m & a) | (!m & b)` 같은 분기 없이 작성되어 있어도 최적화기가 이 패턴을 `select` 관용구로 재인식해서 `cmov`나 최악의 경우 분기로 되돌릴 가능성을 언어 차원에서 막을 방법이 없습니다. 즉, "태생적 불확실성"이라 볼 수 있습니다. 이건 `black_box`의 설계 자체에서 오는 거라 코드를 더 잘 작성해도 해소가 안 됩니다.
 
 하지만 다행히도, 산술 자체는 mul/div/branch 같은 고전적 가변-시간 명령을 사용하지 않고 AND/OR/shift/sub만 사용하여 잔여 리스크는 사실상 "최적화기가 분기를 재구성하는 경우" 하나로 좁혀져 있습니다.
 
-`#[deprecated]` const 트릭, 각 함수 `# Security Note`까지 보면 알 수 있듯 코드의 '약함'은 저 또한 명확히 인지하고 있습니다. 문제는 이게 경고 수준이라는 것입니다. 따라서 제가 이 시점에 생각한 대안은 "인-라인 어셈블리 미지원 타겟은 `compiler_fence` fallback 또는 `Err(Unsupported)` 명시 반환"이며, 지원 타겟을 AMD64 + AArch64 둘로 결정하는 것입니다. **추 후 PR을 통해 이러한 문제를 '게이트'로 명명짓고 강화를 수행하겠습니다.**
+`#[deprecated]` const 트릭, 각 함수 `# Security Note`까지 보면 알 수 있듯 코드의 '약함'은 저 또한 명확히 인지하고 있습니다. 문제는 이게 경고 수준이라는 것입니다. 따라서 제가 이 시점에 생각한 대안은 "인-라인 어셈블리 미지원 타겟은 `compiler_fence` fallback 또는 `Err(Unsupported)` 명시 반환"이며, 지원 타겟을 AMD64 + AArch64 둘로 결정하는 것입니다.
+
+#### 해결
+
+이 문제는 [PR #7](https://github.com/Quant-Off/elib-k0-nt/pull/7)에서 컴파일 게이트로 해결했습니다.
+
+검증된 상수-시간 구현(인-라인 어셈블리)이 있는 x86_64와 aarch64만 지원 타겟으로 확정하고, 그 외 아키텍처의 miri가 아닌 빌드는 `compile_error!`로 컴파일 단계에서 거부합니다.
+
+```rust
+#[cfg(all(not(miri), not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+compile_error!("constant-time 의 검증된 상수-시간 구현은 x86_64와 aarch64 에서만 제공됩니다 ...");
+```
+
+이로써 기존 `#[deprecated]` 경고(soft)를 하드 게이트로 승격했고, best-effort `black_box` fallback이 고보안 빌드에 조용히 섞일 일이 없어졌습니다. `miri`는 인-라인 어셈블리를 실행하지 못하므로 fallback 로직 검증을 위해 예외로 둡니다. 실제로 `riscv64gc-unknown-none-elf` 빌드가 이 게이트 메시지로 거부되는 것을 확인했습니다.
+
+남은 과제로, x86_64/aarch64의 `cmov`/`csel`이 ISA 차원에서 데이터 독립 시간을 보장받으려면 aarch64 DIT 비트와 x86 DOITM을 켜는 하드닝이 별도로 필요하며 이는 향후 다룰 예정입니다.
 
 ---
 
