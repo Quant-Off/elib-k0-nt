@@ -22,7 +22,7 @@ unsafe extern "C" {
 }
 
 /// malloc으로 size 바이트 할당
-/// 
+///
 /// Valgrind가 자동으로 undefined로 추적
 unsafe fn alloc_secret<T>() -> *mut T {
     let p = unsafe { malloc(size_of::<T>()) };

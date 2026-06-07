@@ -113,15 +113,15 @@ mod tests {
         staging[0..2].copy_from_slice(&(written as u16).to_le_bytes());
         staging[2..6].copy_from_slice(&total.to_le_bytes());
         // staging[6..8] reserved 이미 0
-        for i in 0..written {
+        for (i, ev) in events.iter().enumerate() {
             let off = STATUS_PAYLOAD_HEADER + i * ENROLL_EVENT_SIZE;
             // Pitfall 2 회피 명시 byte 조립
-            staging[off..off + 4].copy_from_slice(&events[i].seq.to_le_bytes());
-            staging[off + 4] = events[i].slot_idx;
-            staging[off + 5] = events[i].result;
-            staging[off + 6] = events[i].bus_kind;
-            staging[off + 7] = events[i]._pad;
-            staging[off + 8..off + 12].copy_from_slice(&events[i].pk_hash_prefix);
+            staging[off..off + 4].copy_from_slice(&ev.seq.to_le_bytes());
+            staging[off + 4] = ev.slot_idx;
+            staging[off + 5] = ev.result;
+            staging[off + 6] = ev.bus_kind;
+            staging[off + 7] = ev._pad;
+            staging[off + 8..off + 12].copy_from_slice(&ev.pk_hash_prefix);
         }
         build_response_frame(req_id, CMD_STATUS, STATUS_OK, &staging[..payload_len], out)
     }
@@ -202,20 +202,20 @@ mod tests {
         );
         assert_eq!(&out[22..24], &[0u8, 0u8], "reserved 2 옥텟 0");
         // (6) events byte-exact (5 events × 12 옥텟)
-        for i in 0..5 {
+        for (i, ev) in events.iter().enumerate() {
             let off = 16 + STATUS_PAYLOAD_HEADER + i * ENROLL_EVENT_SIZE;
             assert_eq!(
                 u32::from_le_bytes([out[off], out[off + 1], out[off + 2], out[off + 3]]),
-                events[i].seq,
+                ev.seq,
                 "event {i} seq"
             );
-            assert_eq!(out[off + 4], events[i].slot_idx, "event {i} slot_idx");
-            assert_eq!(out[off + 5], events[i].result, "event {i} result");
-            assert_eq!(out[off + 6], events[i].bus_kind, "event {i} bus_kind");
-            assert_eq!(out[off + 7], events[i]._pad, "event {i} pad");
+            assert_eq!(out[off + 4], ev.slot_idx, "event {i} slot_idx");
+            assert_eq!(out[off + 5], ev.result, "event {i} result");
+            assert_eq!(out[off + 6], ev.bus_kind, "event {i} bus_kind");
+            assert_eq!(out[off + 7], ev._pad, "event {i} pad");
             assert_eq!(
                 &out[off + 8..off + 12],
-                &events[i].pk_hash_prefix,
+                &ev.pk_hash_prefix,
                 "event {i} prefix"
             );
         }
@@ -260,8 +260,8 @@ mod tests {
     fn full_ring_max_392b() {
         // (1) AUDIT_RING_CAPACITY = 32 events 모두 채움
         let mut events = [EnrollEventLocal::default(); AUDIT_RING_CAPACITY];
-        for i in 0..AUDIT_RING_CAPACITY {
-            events[i] = EnrollEventLocal {
+        for (i, ev) in events.iter_mut().enumerate() {
+            *ev = EnrollEventLocal {
                 seq: i as u32,
                 slot_idx: (i & 0xFF) as u8,
                 result: 5,

@@ -18,6 +18,7 @@ mod tests {
 
     // src/bus.rs::Ring3ProcessBus 정확 미러 (4 필드, strict layout)
     struct MockRing3ProcessBus {
+        #[allow(dead_code)]
         endpoint: u16,
         open_state: bool,
         pending_response: [u8; WIRE_FRAME_MAX],

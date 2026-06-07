@@ -25,8 +25,8 @@ mod tests {
 
     fn populated() -> MockAesGcmState {
         let mut k = [0u8; 32];
-        for i in 0..32 {
-            k[i] = (i as u8) ^ 0xA5;
+        for (i, b) in k.iter_mut().enumerate() {
+            *b = (i as u8) ^ 0xA5;
         }
         MockAesGcmState {
             key: Secret::new(k),

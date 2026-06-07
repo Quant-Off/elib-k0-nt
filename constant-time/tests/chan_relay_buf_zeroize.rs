@@ -20,7 +20,8 @@ mod tests {
     // 단일 코어 테스트 진입점에서만 호출  Test harness 가 직렬 실행 보장
     unsafe fn with_relay_buf_mock<R>(f: impl FnOnce(&mut [u8; CHAN_MAX]) -> R) -> R {
         // SAFETY: 단일 코어 테스트 + 직렬 실행
-        let buf = unsafe { &mut *(&raw mut MOCK_RELAY_BUF) };
+        let buf_ptr = &raw mut MOCK_RELAY_BUF;
+        let buf = unsafe { &mut *buf_ptr };
         // D-14 진입 zeroize
         buf.zeroize();
         let r = f(buf);
@@ -91,9 +92,7 @@ mod tests {
         // SAFETY: 단일 코어 테스트
         let result: Result<(), &str> = unsafe {
             with_relay_buf_mock(|buf| {
-                for i in 0..16 {
-                    buf[i] = 0xAB;
-                }
+                buf[..16].fill(0xAB);
                 Err("length mismatch")
             })
         };

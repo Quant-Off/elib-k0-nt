@@ -154,10 +154,10 @@ mod tests {
         assert_eq!(slots[0].rights, 0x07);
 
         // (2) 나머지 슬롯 그대로 Empty
-        for i in 1..4 {
-            assert_eq!(slots[i].state, 0, "slot[{i}] 가 변경됨");
-            assert_eq!(slots[i].token, 0);
-            assert_eq!(slots[i].rights, 0);
+        for (i, slot) in slots.iter().enumerate().skip(1) {
+            assert_eq!(slot.state, 0, "slot[{i}] 가 변경됨");
+            assert_eq!(slot.token, 0);
+            assert_eq!(slot.rights, 0);
         }
     }
 
