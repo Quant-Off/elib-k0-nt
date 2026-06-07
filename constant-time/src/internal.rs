@@ -402,24 +402,21 @@ pub(crate) fn ct_gt_i64(a: i64, b: i64) -> u8 {
 //
 // 위에서 처리하지 않은 모든 아키텍처를 위한 일반 fallback입니다.
 //
-// 보안 경고: 이 일반 fallback은 best-effort 최적화 배리어인
-// `core::hint::black_box`에 의존합니다. 미지원 아키텍처에서는 상수-시간
-// 성질이 보장되지 않으므로 보안이 중요한 배포 환경에서는 네이티브 어셈블리
-// 구현 추가를 고려하시기 바랍니다.
-//
-// 하드웨어 수준 상수-시간이 보장되는 아키텍처는 x86_64와 aarch64입니다.
+// 보안 게이트: 이 일반 fallback은 best-effort 최적화 배리어인
+// `core::hint::black_box`에 의존하므로 하드웨어 수준 상수-시간을 보장하지
+// 않습니다. 검증된 인-라인 어셈블리 구현이 있는 x86_64와 aarch64만 지원
+// 타겟으로 확정하고, 그 외 아키텍처의 비 miri 빌드는 아래 `compile_error!`로
+// 컴파일 단계에서 거부하여 best-effort 경로가 고보안 빌드에 섞이지 않도록
+// 합니다. miri는 인-라인 어셈블리를 실행하지 못하므로 fallback 로직 검증을
+// 위해 예외로 둡니다.
 //
 
-#[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
-const _: () = {
-    #[deprecated(
-        since = "0.1.0",
-        note = "Constant-time guarantees are weaker on this architecture. \
-                Only x86_64 and aarch64 have verified CT implementations."
-    )]
-    const CT_FALLBACK_WARNING: () = ();
-    let _ = CT_FALLBACK_WARNING;
-};
+#[cfg(all(not(miri), not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+compile_error!(
+    "constant-time 의 검증된 상수-시간 구현은 x86_64 와 aarch64 에서만 제공됩니다. \
+     이 아키텍처의 fallback 은 black_box 기반 best-effort 라 하드웨어 수준 상수-시간을 \
+     보장하지 않으므로 고보안 빌드를 거부합니다. 테스트 목적이면 miri 로 실행하십시오."
+);
 
 /// 조건 바이트로부터 상수-시간 비트 마스크를 생성하는 함수입니다.
 ///
