@@ -82,8 +82,6 @@ mod sys {
 
     // getrandom syscall number for x86_64
     const SYS_GETRANDOM: i64 = 318;
-    // GRND_RANDOM flag: block until enough entropy (더 보수적인 선택)
-    const GRND_NONBLOCK: u32 = 0x0001;
 
     pub fn fill_bytes_impl(dest: &mut [u8]) -> Result<(), DrbgError> {
         let mut offset = 0usize;
@@ -110,6 +108,10 @@ mod sys {
                 if ret == -4 {
                     continue;
                 }
+                return Err(DrbgError::OsEntropyFailed);
+            }
+
+            if ret == 0 {
                 return Err(DrbgError::OsEntropyFailed);
             }
 
@@ -149,6 +151,10 @@ mod sys {
                 if ret == -4 {
                     continue;
                 }
+                return Err(DrbgError::OsEntropyFailed);
+            }
+
+            if ret == 0 {
                 return Err(DrbgError::OsEntropyFailed);
             }
 
@@ -227,7 +233,7 @@ mod sys {
 
     // RtlGenRandom from advapi32.dll (also known as SystemFunction036)
     #[link(name = "advapi32")]
-    extern "system" {
+    unsafe extern "system" {
         #[link_name = "SystemFunction036"]
         fn RtlGenRandom(buf: *mut u8, len: u32) -> u8;
     }
@@ -289,6 +295,10 @@ mod sys {
                 return Err(DrbgError::OsEntropyFailed);
             }
 
+            if ret == 0 {
+                return Err(DrbgError::OsEntropyFailed);
+            }
+
             offset += ret as usize;
         }
         Ok(())
@@ -323,6 +333,10 @@ mod sys {
                 if ret == -4 {
                     continue;
                 }
+                return Err(DrbgError::OsEntropyFailed);
+            }
+
+            if ret == 0 {
                 return Err(DrbgError::OsEntropyFailed);
             }
 
