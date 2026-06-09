@@ -8,10 +8,18 @@
 //! - **Linux** (x86_64, aarch64): `getrandom` syscall (커널 3.17+)
 //! - **macOS/iOS** (x86_64, aarch64): `getentropy` libc 호출
 //! - **Windows** (x86_64): `RtlGenRandom` (advapi32.dll)
-//! - **FreeBSD/OpenBSD** (x86_64, aarch64): `getentropy` syscall
+//! - **FreeBSD** (x86_64, aarch64): `getrandom` syscall
+//! - **OpenBSD** (x86_64, aarch64): `getentropy` syscall
+//! - **NetBSD** (x86_64): `getentropy` libc 호출
+//!
+//! 기본 빌드 타겟 `x86_64-unknown-none` 베어메탈에서는 위 어느 경로도
+//! 컴파일되지 않고 항상 `DrbgError::OsEntropyFailed` 를 반환하는 fallback 만
+//! 남는다. 즉 마이크로커널 Ring-3 데몬 배포본에서 OS 엔트로피는 비가용이며
+//! 시드는 커널 또는 하드웨어 TRNG 등 외부에서 주입되어야 한다. 아래 플랫폼별
+//! 경로는 주로 호스트 측 빌드/테스트를 위한 것이다.
 //!
 //! # For Embedded
-//! OS가 없는 베어메탈 환경에서는 `OsEntropyUnavailable` 에러를 반환합니다.
+//! OS가 없는 베어메탈 환경에서는 `DrbgError::OsEntropyFailed` 에러를 반환합니다.
 //! 이 경우 하드웨어 RNG, 외부 엔트로피 소스, 또는 사용자 제공 시드를
 //! 사용해야 합니다.
 //!
@@ -19,6 +27,13 @@
 //! - 부팅 직후 엔트로피 풀이 초기화되지 않았을 수 있습니다.
 //! - VM 환경에서는 엔트로피 품질이 낮을 수 있습니다.
 //! - 이 모듈은 블로킹 모드로 동작하여 충분한 엔트로피를 보장합니다.
+//! - 본 모듈이 노출하는 것은 OS CSPRNG(`getrandom`/`getentropy`/`RtlGenRandom`)
+//!   출력이며, 이는 SP 800-90B 로 검증된(헬스 테스트 포함) 엔트로피 소스가 아니라
+//!   SP 800-90C 관점의 RBG 시드원으로 사용된다. FIPS 인증 시 엔트로피 평가는
+//!   플랫폼 RBG 보증에 의존한다.
+//! - macOS 와 NetBSD 경로는 raw syscall 대신 libc `getentropy` 심볼에 링크된다.
+//!   해당 플랫폼은 syscall 번호가 안정적이지 않아 불가피한 예외이며 Linux 와
+//!   BSD 의 raw syscall 경로와 구별된다.
 
 use crate::DrbgError;
 
@@ -35,6 +50,8 @@ use crate::DrbgError;
 /// 이 함수는 암호학적으로 안전한 난수를 반환합니다.
 /// 부팅 직후나 VM 환경에서는 충분한 엔트로피가 누적될 때까지
 /// 블로킹될 수 있습니다.
+/// `dest` 는 민감한 난수이며 이 함수는 호출자 소유 버퍼의 소거를 책임지지
+/// 않는다. 호출자가 사용 직후 명시적으로 `zeroize` 해야 한다.
 #[inline]
 pub fn fill_bytes(dest: &mut [u8]) -> Result<(), DrbgError> {
     if dest.is_empty() {
@@ -48,6 +65,11 @@ pub fn fill_bytes(dest: &mut [u8]) -> Result<(), DrbgError> {
 /// # Returns
 /// * `Ok([u8; N])` - N 바이트의 난수 배열
 /// * `Err(DrbgError::OsEntropyFailed)` - OS 엔트로피 소스 접근 실패
+///
+/// # Security Note
+/// 반환되는 `[u8; N]` 은 `Secret` 으로 보호되지 않으며 Drop 시 자동 소거되지
+/// 않는다. 호출자가 사용 직후 직접 `zeroize` 하거나 `zeroize::Secret` 으로
+/// 감싸야 한다.
 #[inline]
 pub fn get_bytes<const N: usize>() -> Result<[u8; N], DrbgError> {
     let mut buf = [0u8; N];
