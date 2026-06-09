@@ -56,7 +56,7 @@ impl SecureBuffer {
     #[inline]
     pub fn new_owned(len: usize) -> Result<Self, DrbgError> {
         if len > MAX_SECURE_BUFFER_LEN {
-            return Err(DrbgError::AllocationFailed);
+            return Err(DrbgError::InvalidArgument);
         }
         Ok(Self {
             data: [0u8; MAX_SECURE_BUFFER_LEN],
@@ -79,7 +79,7 @@ impl Zeroize for SecureBuffer {
     #[inline]
     fn zeroize(&mut self) {
         // 활성 영역만이 아니라 backing storage 전체를 소거하여
-        // 과거 더 큰 len 으로 사용된 적이 있는 잔존 바이트도 함께 제거.
+        // 과거 더 큰 len 으로 사용된 적이 있는 잔존 바이트도 함께 제거
         self.data.zeroize();
         self.len.zeroize();
     }
