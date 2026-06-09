@@ -12,12 +12,14 @@ use zeroize::Zeroize;
 pub enum DrbgError {
     /// 엔트로피 입력이 최소 보안 강도 요구사항(security_strength bytes) 미달
     EntropyTooShort,
-    /// 엔트로피 입력 또는 Nonce가 최대 허용 길이(2^35 bits = 2^32 bytes) 초과
+    /// 엔트로피 입력이 최대 허용 길이(2^35 bits = 2^32 bytes) 초과
     EntropyTooLong,
     /// additional_input 또는 personalization_string이 최대 허용 길이(2^35 bits = 2^32 bytes) 초과
     InputTooLong,
     /// Nonce가 최소 길이(security_strength / 2 bytes) 미달
     NonceTooShort,
+    /// Nonce가 최대 허용 길이(2^35 bits = 2^32 bytes) 초과
+    NonceTooLong,
     /// 잘못된 인수 (예: no_of_bits 오버플로우)
     InvalidArgument,
     /// 재시드 간격(2^48) 초과 — 즉시 reseed() 호출 필요

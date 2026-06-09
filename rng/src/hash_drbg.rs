@@ -26,9 +26,8 @@
 //!     let mut random_bytes = [0u8; 128];
 //!     drbg.generate(&mut random_bytes, None)?;
 //!
-//!     // 3. reseed — ReseedRequired 수신 시 호출
-//!     let new_entropy = &[1u8; 16]; // 실제로는 OS 엔트로피 소스에서 획득
-//!     drbg.reseed(new_entropy, None)?;
+//!     // 3. reseed — ReseedRequired 수신 시 OS 엔트로피로 안전하게 재시드
+//!     drbg.reseed_from_os(None)?;
 //!
 //!     // 4. 추가 난수 생성
 //!     let mut more_random_bytes = [0u8; 64];
@@ -115,9 +114,14 @@ macro_rules! impl_hash_drbg {
                 let no_of_bits_be = no_of_bits.to_be_bytes();
 
                 let m = no_of_bytes_to_return.div_ceil($outlen);
+                // Hash_df counter 는 1바이트 — m 이 255 초과 시 카운터 wrap 발생
+                // 현 호출은 seedlen 한정(m ≤ 3)이나 계약을 코드로 강제하여 오용 차단
+                if m > 255 {
+                    return Err(DrbgError::InvalidArgument);
+                }
                 let mut written = 0usize;
 
-                // counter in [1, m], m ≤ ceil(seedlen / outlen) ≤ 4 — u8 오버플로 없음
+                // counter in [1, m], m ≤ 255 보장됨 — u8 오버플로 없음
                 for counter in 1u8..=(m as u8) {
                     let mut hasher = <$hasher_type>::new();
                     hasher.update(&[counter]);
@@ -330,7 +334,7 @@ macro_rules! impl_hash_drbg {
                     return Err(DrbgError::NonceTooShort);
                 }
                 if (nonce.len() as u64) > MAX_LENGTH {
-                    return Err(DrbgError::EntropyTooLong);
+                    return Err(DrbgError::NonceTooLong);
                 }
 
                 let ps = personalization_string.unwrap_or(&[]);
@@ -403,6 +407,35 @@ macro_rules! impl_hash_drbg {
                 Ok(())
             }
 
+            /// OS 엔트로피 소스로부터 신선한 엔트로피를 수집하여 안전하게 reseed 합니다.
+            ///
+            /// [`new_from_os`](Self::new_from_os) 와 대칭인 권장 reseed 경로입니다.
+            /// 호출자가 엔트로피를 직접 주입하는 [`reseed`](Self::reseed) 와 달리 OS
+            /// CSPRNG 에서 직접 수집하여, 예측 가능하거나 약한 엔트로피 주입 위험을
+            /// 차단합니다. `ReseedRequired` 수신 후 이 경로를 우선 사용하세요.
+            ///
+            /// # 엔트로피 수집 전략 (NIST SP 800-90A Rev.1 Section 8.6.7)
+            /// `entropy_input` 으로 `2 × security_strength` bytes 를 수집합니다
+            /// (new_from_os 와 동일하게 2배 여유).
+            ///
+            /// # 메모리 보안
+            /// 수집된 엔트로피는 [`SecureBuffer`]로 관리되어 Drop 시 자동 소거됩니다.
+            ///
+            /// # Errors
+            /// - `DrbgError::OsEntropyFailed`: OS 엔트로피 소스 접근 실패
+            /// - `DrbgError::InputTooLong`: `additional_input` 이 최대 허용 길이 초과
+            pub fn reseed_from_os(
+                &mut self,
+                additional_input: Option<&[u8]>,
+            ) -> Result<(), DrbgError> {
+                // entropy_input: 2 × security_strength 바이트 (new_from_os 와 동일 전략)
+                let entropy = crate::os_entropy::extract_os_entropy($min_entropy * 2)
+                    .map_err(|_| DrbgError::OsEntropyFailed)?;
+
+                // SecureBuffer 는 Drop 시 자동 소거 — 별도 소거 루프 불필요
+                self.reseed(entropy.as_slice(), additional_input)
+            }
+
             /// NIST SP 800-90A Rev. 1, Section 10.1.1.4: Hash_DRBG_Generate_algorithm
             ///
             /// `output.len()` 바이트의 의사난수를 생성합니다.
@@ -424,24 +457,24 @@ macro_rules! impl_hash_drbg {
                 }
 
                 // additional_input 처리
+                // 표준상 additional_input != Null 이면 길이 0이어도 w 경로 실행
+                // -> Some(&[]) 은 None 과 구분되어 V 를 갱신, None 만 skip
                 if let Some(ai) = additional_input {
                     if (ai.len() as u64) > MAX_ADDITIONAL_INPUT {
                         return Err(DrbgError::InputTooLong);
                     }
-                    if !ai.is_empty() {
-                        // w = Hash(0x02 || V || additional_input)
-                        let mut hasher = <$hasher_type>::new();
-                        hasher.update(&[0x02u8]);
-                        hasher.update(self.v.as_slice());
-                        hasher.update(ai);
-                        let w = hasher.finalize();
+                    // w = Hash(0x02 || V || additional_input)
+                    let mut hasher = <$hasher_type>::new();
+                    hasher.update(&[0x02u8]);
+                    hasher.update(self.v.as_slice());
+                    hasher.update(ai);
+                    let w = hasher.finalize();
 
-                        // w(outlen bytes)를 seedlen bytes로 오른쪽 정렬 (big-endian MSB=0 패딩)
-                        // V = (V + w) mod 2^seedlen — Secret 으로 자동 소거
-                        let mut w_padded = Secret::new([0u8; $seedlen]);
-                        w_padded.expose_mut()[$seedlen - $outlen..].copy_from_slice(w.as_bytes());
-                        Self::add_mod(self.v.as_mut_slice(), w_padded.expose());
-                    }
+                    // w(outlen bytes)를 seedlen bytes로 오른쪽 정렬 (big-endian MSB=0 패딩)
+                    // V = (V + w) mod 2^seedlen — Secret 으로 자동 소거
+                    let mut w_padded = Secret::new([0u8; $seedlen]);
+                    w_padded.expose_mut()[$seedlen - $outlen..].copy_from_slice(w.as_bytes());
+                    Self::add_mod(self.v.as_mut_slice(), w_padded.expose());
                 }
 
                 // returned_bits = Hashgen(requested_bytes, V)
@@ -637,6 +670,53 @@ mod tests {
             a.generate(&mut out_a, None).expect("generate-a");
             b.generate(&mut out_b, None).expect("generate-b");
             assert_eq!(out_a, out_b, "결정론적 출력 검증 실패");
+        }
+    }
+
+    /// F-2: 빈 additional_input(Some(&[]))이 None 과 다른 경로로 처리됨을 검증.
+    /// 표준상 additional_input != Null 이면 길이 0이어도 w 경로가 V 를 갱신해야 함.
+    #[test]
+    fn test_hash_drbg_empty_additional_input_differs_from_none() {
+        let entropy = [0x11u8; 32];
+        let nonce = [0x22u8; 16];
+
+        unsafe {
+            let mut a =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-a");
+            let mut b =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-b");
+
+            let mut out_empty = [0u8; 64];
+            let mut out_none = [0u8; 64];
+            a.generate(&mut out_empty, Some(&[]))
+                .expect("generate-empty");
+            b.generate(&mut out_none, None).expect("generate-none");
+            assert_ne!(
+                out_empty, out_none,
+                "빈 additional_input 이 None 과 동일 취급됨 (표준 위반)"
+            );
+        }
+    }
+
+    /// F-1: reseed_from_os 가 OS 엔트로피로 재시드하고 카운터를 1 로 리셋함을 검증.
+    /// OS 엔트로피가 가용한 호스트(예: aarch64-apple-darwin)에서만 통과.
+    #[test]
+    fn test_hash_drbg_reseed_from_os() {
+        let entropy = [0x33u8; 32];
+        let nonce = [0x44u8; 16];
+
+        unsafe {
+            let mut drbg =
+                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+
+            let mut out = [0u8; 32];
+            drbg.generate(&mut out, None).expect("generate-1"); // counter -> 2
+            drbg.reseed_from_os(None).expect("reseed_from_os"); // counter -> 1
+            assert_eq!(drbg.reseed_counter, 1, "reseed_from_os 후 카운터 미리셋");
+
+            drbg.generate(&mut out, None).expect("generate-2"); // counter -> 2
+            assert_eq!(drbg.reseed_counter, 2, "generate 후 카운터 미증가");
+            assert!(out.iter().any(|&b| b != 0), "재시드 후 출력이 0");
         }
     }
 }
