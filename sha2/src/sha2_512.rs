@@ -150,20 +150,28 @@ impl SHA512State {
 
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *self.state.expose();
 
+        // 라운드 임시변수는 비밀 상태 파생값이므로 루프 밖으로 끌어올려 종료 후 명시적 소거
+        let mut s0 = 0u64;
+        let mut s1 = 0u64;
+        let mut ch = 0u64;
+        let mut maj = 0u64;
+        let mut temp1 = 0u64;
+        let mut temp2 = 0u64;
+
         for i in 0..80 {
             // Σ1(e) = ROTR14(e) ⊕ ROTR18(e) ⊕ ROTR41(e)
-            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
-            let ch = (e & f) ^ (!e & g);
-            let temp1 = h
+            s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+            ch = (e & f) ^ (!e & g);
+            temp1 = h
                 .wrapping_add(s1)
                 .wrapping_add(ch)
                 .wrapping_add(SHA_512_K[i])
                 .wrapping_add(w[i]);
 
             // Σ0(a) = ROTR28(a) ⊕ ROTR34(a) ⊕ ROTR39(a)
-            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
+            s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+            maj = (a & b) ^ (a & c) ^ (b & c);
+            temp2 = s0.wrapping_add(maj);
 
             h = g;
             g = f;
@@ -193,6 +201,13 @@ impl SHA512State {
         f.zeroize();
         g.zeroize();
         h.zeroize();
+        // 라운드 임시변수 명시적 소거
+        s0.zeroize();
+        s1.zeroize();
+        ch.zeroize();
+        maj.zeroize();
+        temp1.zeroize();
+        temp2.zeroize();
     }
 
     pub(crate) fn update(&mut self, data: &[u8]) {

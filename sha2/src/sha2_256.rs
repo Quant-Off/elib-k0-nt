@@ -58,18 +58,26 @@ impl SHA256State {
 
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *self.state.expose();
 
+        // 라운드 임시변수는 비밀 상태 파생값이므로 루프 밖으로 끌어올려 종료 후 명시적 소거
+        let mut s0 = 0u32;
+        let mut s1 = 0u32;
+        let mut ch = 0u32;
+        let mut maj = 0u32;
+        let mut temp1 = 0u32;
+        let mut temp2 = 0u32;
+
         for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ (!e & g);
-            let temp1 = h
+            s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            ch = (e & f) ^ (!e & g);
+            temp1 = h
                 .wrapping_add(s1)
                 .wrapping_add(ch)
                 .wrapping_add(SHA_256_K[i])
                 .wrapping_add(w[i]);
 
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
+            s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            maj = (a & b) ^ (a & c) ^ (b & c);
+            temp2 = s0.wrapping_add(maj);
 
             h = g;
             g = f;
@@ -99,6 +107,13 @@ impl SHA256State {
         f.zeroize();
         g.zeroize();
         h.zeroize();
+        // 라운드 임시변수 명시적 소거
+        s0.zeroize();
+        s1.zeroize();
+        ch.zeroize();
+        maj.zeroize();
+        temp1.zeroize();
+        temp2.zeroize();
     }
 
     pub(crate) fn update(&mut self, data: &[u8]) {
