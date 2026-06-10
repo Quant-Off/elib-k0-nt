@@ -1,5 +1,7 @@
 # AES-256 Module
 
+[![Language](https://img.shields.io/badge/README-Korean_Ver-blue?style=for-the-badge)](README.md)
+
 A `no_std` pure-Rust crate implementing FIPS 197 AES-256 block cipher and NIST SP 800-38A (CBC, CTR) and SP 800-38D (GCM) modes of operation with zero external dependencies. This document covers the feature specification, security design rationale, and the issues found — along with their resolutions — during the 1.1.0 cross-validation pass.
 
 ---
