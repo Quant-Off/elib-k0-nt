@@ -39,8 +39,8 @@ opt-level = "z" # 크기 최적화
 [workspace.dependencies]
 zeroize = { path = "zeroize", version = "1.1.0" }
 constant-time = { path = "constant-time", version = "1.1.0" }
-sha2 = { path = "sha2", version = "1.0.0" }
-sha3 = { path = "sha3", version = "1.0.0" }
+sha2 = { path = "sha2", version = "1.1.0" }
+sha3 = { path = "sha3", version = "1.1.0" }
 blake = { path = "blake", version = "1.0.0" }
 rng = { path = "rng", version = "1.1.0" }
 ed25519 = { path = "ed25519", version = "1.0.0" }
@@ -49,7 +49,7 @@ x25519 = { path = "x25519", version = "1.0.0" }
 x448 = { path = "x448", version = "1.0.0" }
 aes = { path = "aes", version = "1.1.0" }
 chacha20 = { path = "chacha20", version = "1.0.0" }
-mldsa = { path = "mldsa", version = "1.0.0" }
+mldsa = { path = "mldsa", version = "1.1.0" }
 mlkem = { path = "mlkem", version = "1.0.0" }
 elib-k0-ipc = { path = "elib-k0-ipc", version = "1.0.0" }
 elib-k0-mock-transport = { path = "elib-k0-mock-transport", version = "1.0.0" }
