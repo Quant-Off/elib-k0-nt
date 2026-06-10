@@ -8,7 +8,7 @@
 - [X] AES
 - [ ] BLAKE
 - [X] SHA2
-- [ ] SHA3
+- [X] SHA3
 - [ ] ChaCha20
 - [ ] Ed448
 - [ ] Ed25519
