@@ -21,7 +21,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 authors = ["Q. T. Felix <qtfelix@qu4nt.space>"]
 # 루트 LICENSE (MIT) 와 동기화. SPDX 식별자로 명시해 다운스트림
@@ -37,17 +37,17 @@ lto = true # Link Time Optimization을 통한 바이너리 최소화
 opt-level = "z" # 크기 최적화
 
 [workspace.dependencies]
-zeroize = { path = "zeroize", version = "1.0.0" }
-constant-time = { path = "constant-time", version = "1.0.0" }
+zeroize = { path = "zeroize", version = "1.1.0" }
+constant-time = { path = "constant-time", version = "1.1.0" }
 sha2 = { path = "sha2", version = "1.0.0" }
 sha3 = { path = "sha3", version = "1.0.0" }
 blake = { path = "blake", version = "1.0.0" }
-rng = { path = "rng", version = "1.0.0" }
+rng = { path = "rng", version = "1.1.0" }
 ed25519 = { path = "ed25519", version = "1.0.0" }
 ed448 = { path = "ed448", version = "1.0.0" }
 x25519 = { path = "x25519", version = "1.0.0" }
 x448 = { path = "x448", version = "1.0.0" }
-aes = { path = "aes", version = "1.0.0" }
+aes = { path = "aes", version = "1.1.0" }
 chacha20 = { path = "chacha20", version = "1.0.0" }
 mldsa = { path = "mldsa", version = "1.0.0" }
 mlkem = { path = "mlkem", version = "1.0.0" }

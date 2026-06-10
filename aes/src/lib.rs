@@ -68,9 +68,9 @@ impl AES256 {
     /// - `key`: 32바이트 암호화 키
     #[must_use]
     pub fn new(key: &[u8; KEY_SIZE]) -> Self {
-        Self {
-            round_keys: Secret::new(expand_key(key)),
-        }
+        let mut round_keys = Secret::new([0u32; NB * (NR + 1)]);
+        expand_key(key, round_keys.expose_mut());
+        Self { round_keys }
     }
 
     /// 16바이트 블록을 암호화합니다.

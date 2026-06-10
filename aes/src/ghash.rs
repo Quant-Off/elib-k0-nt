@@ -6,7 +6,7 @@ use zeroize::Zeroize;
 // 부분곱이 합산되며 (8 < 16), 4비트 lane안에 carry없이 들어가므로 정확히 다항식 비트가 추출
 //
 // AES-NI/PCLMULQDQ 미지원 환경 (TCG 등) 에서 정수 곱셈만으로 상수-시간으로 실행됨
-// (AMD64/AArch64 정수 곱셈은 데이터 비종속 시간 보장, todo: 근데 추가적인 구글링 필요)
+// (AMD64/AArch64 정수 곱셈은 데이터 비종속 시간 보장)
 #[inline]
 const fn bmul32(x: u32, y: u32) -> u64 {
     const MX0: u32 = 0x1111_1111;
@@ -143,7 +143,7 @@ impl GHash {
     }
 
     pub fn reset(&mut self) {
-        self.state_n = 0;
+        self.state_n.zeroize();
     }
 }
 
