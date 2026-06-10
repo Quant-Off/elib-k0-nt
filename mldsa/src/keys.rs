@@ -10,7 +10,7 @@ use crate::poly::PolyVec;
 use crate::sample::{expand_a, expand_s};
 use constant_time::{Choice, CtSelOps};
 use sha3::{SHAKE256, XOF};
-use zeroize::Secret;
+use zeroize::{Secret, Zeroize};
 
 pub struct PublicKey<const K: usize> {
     pub rho: [u8; 32],
@@ -19,7 +19,7 @@ pub struct PublicKey<const K: usize> {
 
 pub struct PrivateKey<const K: usize, const L: usize> {
     pub rho: [u8; 32],
-    pub k_seed: [u8; 32],
+    pub k_seed: Secret<[u8; 32]>,
     pub tr: [u8; 64],
     pub s1: Secret<PolyVec<L>>,
     pub s2: Secret<PolyVec<K>>,
@@ -73,8 +73,9 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     k_seed.copy_from_slice(&expanded[96..128]);
 
     let a_hat = expand_a::<K, L>(&rho)?;
-    let (mut s1, s2pv) = expand_s::<K, L, ETA>(&rho_prime)?;
+    let (mut s1, mut s2pv) = expand_s::<K, L, ETA>(&rho_prime)?;
     let s2 = Secret::new(s2pv);
+    s2pv.zeroize();
 
     let s1_original = Secret::new(s1);
     s1.ntt();
@@ -82,8 +83,9 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     t.intt();
     t = t.add(&s2);
 
-    let (t1, t0pv) = power2round_vec(&t);
+    let (t1, mut t0pv) = power2round_vec(&t);
     let t0 = Secret::new(t0pv);
+    t0pv.zeroize();
 
     let mut shake_tr = SHAKE256::new();
     shake_tr.update(&rho);
@@ -98,12 +100,18 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     let pk = PublicKey { rho, t1 };
     let sk = PrivateKey {
         rho,
-        k_seed,
+        k_seed: Secret::new(k_seed),
         tr,
         s1: s1_original,
         s2,
         t0,
     };
+
+    k_seed.zeroize();
+    expanded.zeroize();
+    rho_prime.zeroize();
+    s1.zeroize();
+    t.zeroize();
 
     Ok((pk, sk))
 }
@@ -143,7 +151,7 @@ pub fn sk_encode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: u
     out[off..off + 32].copy_from_slice(&sk.rho);
     off += 32;
 
-    out[off..off + 32].copy_from_slice(&sk.k_seed);
+    out[off..off + 32].copy_from_slice(sk.k_seed.expose());
     off += 32;
 
     out[off..off + 64].copy_from_slice(&sk.tr);
@@ -174,8 +182,10 @@ pub fn sk_decode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: u
     rho.copy_from_slice(&sk_bytes[off..off + 32]);
     off += 32;
 
-    let mut k_seed = [0u8; 32];
-    k_seed.copy_from_slice(&sk_bytes[off..off + 32]);
+    let mut k_seed_local = [0u8; 32];
+    k_seed_local.copy_from_slice(&sk_bytes[off..off + 32]);
+    let k_seed = Secret::new(k_seed_local);
+    k_seed_local.zeroize();
     off += 32;
 
     let mut tr = [0u8; 64];
