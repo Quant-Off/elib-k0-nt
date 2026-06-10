@@ -4,7 +4,7 @@
 
 저는 이 암호 모듈의 다양한 암호 기능과 기술적인 작동 방식을 상세화한 명세나 모듈과 함수 등의 기능 작동 사항에 대한 다이렉트 주석을 제가 직접 작성하려고 최대한 노력합니다만, 작성된 결과물을 '이해하기 쉽게' 만드는 데(Mermaid 다이어그램을 생성하거나, 명세의 가독성 향상을 위한 맥락, 설명체 등의 간결화 작업과 영문 번역 등) [Claude Code](http://claude.ai/)의 Sonnet 4.6 모델을 적극적으로 사용합니다.
 
-추가적으로, [ISO-LIGHT-K0](https://github.com/Quant-Off/iso-light-k0) 마이크로커널과의 통합을 위해 기능적으로 어떤 부분이 필요한지 점검하고, 누락됐거나 개선이 필요한 부분에 대해 피드백(리뷰) 받고, 암호 알고리즘이 국제적 표준을 준수하는지 확인하기 위해 [NIST FIPS 140-2 또는 3](https://csrc.nist.gov/projects/cryptographic-module-validation-program/fips-140-3-standards)의 명세를 파악하기 위해 Claude Code의 Opus 4.6, 4.8, [Gemini 3.1 Pro](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-pro?hl=ko), [Qwen 3.7 Max](https://qwen.ai/blog?id=qwen3.7) 모델을 사용합니다. 모든 작업을 이 분야의 전문가를 통해 교차 검증하는 것을 절대 잊지 않습니다.
+추가적으로, [ISO-LIGHT-K0](https://github.com/Quant-Off/iso-light-k0) 마이크로커널과의 통합을 위해 기능적으로 어떤 부분이 필요한지 점검하고, 누락됐거나 개선이 필요한 부분에 대해 피드백(리뷰) 받고, 암호 알고리즘이 국제적 표준을 준수하는지 확인하기 위해 [NIST FIPS 140-2 또는 3](https://csrc.nist.gov/projects/cryptographic-module-validation-program/fips-140-3-standards)의 명세를 파악하기 위해 Claude Code의 Opus 4.8, Fable 5, [Gemini 3.1 Pro](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-pro?hl=ko), [Qwen 3.7 Max](https://qwen.ai/blog?id=qwen3.7) 모델을 사용합니다. 모든 작업을 이 분야의 전문가를 통해 교차 검증하는 것을 절대 잊지 않습니다.
 
 이 프로젝트는 1인 개발임에 따라 '문서 작업', '주석 작업'에 에이전트를 적극 활용하고 있습니다. 에이전트가 이 프로젝트의 파일을 수정하는 부분은 `.md` 파일과 작성된 모듈, 함수의 주석 추가를 위한 `.rs` 파일입니다. **민감한 기능**(암호 알고리즘의 구현 등)에 대해서는 절대적으로 접근할 수 없도록 제한하고 있습니다. 저는 바이브 코더가 아니며, 다소 구시대적인 개발자일 뿐입니다. 이 명시는 AI를 활용하여 다양한 자동화 작업이나, 개발, 보안 감사를 진행하는 사람들에 대해 비아냥거리기 위해 작성된 것이 아닙니다. 발전하는 AI 시대에 맞게 AI 사용 범위를 인간을 위해 명시했을 뿐입니다.
 
