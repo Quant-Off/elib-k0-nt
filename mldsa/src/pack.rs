@@ -64,7 +64,7 @@ pub fn bit_pack(w: &Poly, a: i32, b: i32, out: &mut [u8]) {
 
     for coeff in &w.coeffs {
         let signed = fq_to_signed_ct(coeff.0, b);
-        let encoded = (a as i64 + signed as i64) as u64;
+        let encoded = (b as i64 - signed as i64) as u64;
         buf |= (encoded & mask) << bits;
         bits += bw;
         while bits >= 8 {
@@ -94,7 +94,7 @@ pub fn bit_unpack(v: &[u8], a: i32, b: i32) -> Poly {
         buf >>= bw;
         bits -= bw;
 
-        let signed = encoded - a;
+        let signed = b - encoded;
         poly.coeffs[i] = Fq::new(signed_to_fq(signed));
     }
     poly
