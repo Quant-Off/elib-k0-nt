@@ -76,6 +76,134 @@ Modern CPUs can execute instructions Out-of-Order independently of the compiler 
 6. black_box(ptr)              — Final prevention of optimization by loading the pointer into a register
 ```
 
+## Formal Model
+
+Let a buffer occupy the bytes $p, p{+}1, \dots, p{+}n{-}1$. A wipe is the family of stores
+
+$$ W = \bigl\{\, \mathrm{mem}[p{+}i] \leftarrow 0 \;\bigm|\; 0 \le i < n \,\bigr\}. $$
+
+**Dead Store Elimination.** A store $s \in W$ to address $a$ is *dead* when no load of $a$ is reachable from $s$ before $a$ is overwritten or its storage is released:
+
+$$ \mathrm{dead}(s) \iff \nexists\, \ell \in \mathrm{Loads}(a) \ \text{such that}\ s \prec \ell . $$
+
+A correct optimizer may delete any dead store, since deleting it leaves the program's observable behavior $\mathcal{O}$ unchanged. For a secret that is no longer used after the wipe, *every* $s \in W$ is dead, so $W$ is exactly the set DSE is permitted to remove. This is the worst case for cryptographic code: the more "useless" the wipe looks, the more eligible it is for elimination.
+
+**Volatile defeats DSE.** A volatile access is, by definition, an element of $\mathcal{O}$. Writing $w^{\mathrm{vol}}_i$ for the volatile store of byte $i$,
+
+$$ w^{\mathrm{vol}}_i \in \mathcal{O} \quad\Longrightarrow\quad \forall\,\text{sound } \mathcal{T}:\; w^{\mathrm{vol}}_i \in \mathcal{T}(\mathcal{O}) . $$
+
+The deadness premise becomes irrelevant: an observable side effect is preserved whether or not its result is ever read. This converts "may be removed" into "must be emitted."
+
+**Ordering.** The barriers impose a total order on the wipe's operations,
+
+$$ \mathrm{cb}_1 \;\prec\; w^{\mathrm{vol}}_0 \prec \dots \prec w^{\mathrm{vol}}_{n-1} \;\prec\; \mathrm{cb}_2 \;\prec\; \mathrm{acf} \;\prec\; \mathrm{mb} \;\prec\; \mathrm{bb}, $$
+
+where $\mathrm{cb}$ is a compiler barrier, $\mathrm{acf}$ an atomic compiler fence, $\mathrm{mb}$ the CPU memory barrier, and $\mathrm{bb}$ the `black_box` register pin. $\mathrm{cb}_1$ blocks sinking pre-wipe work below the stores; $\mathrm{cb}_2$ and $\mathrm{acf}$ block hoisting post-wipe work above them; $\mathrm{mb}$ forces the retired stores to become globally visible in hardware.
+
+## Assembly-Level Verification (llvm-objdump)
+
+Volatile semantics are a *language-level* contract. To confirm the contract survives the full release pipeline (`opt-level = "z"`, `lto = true`, `panic = "abort"`) all the way down to machine code, the emitted binary is disassembled and validated statically. This reuses the same harness that guards the constant-time crate: `constant-time/scripts/check_ct_asm.sh` drives both, and its `PROBES_ZEROIZE` group covers this crate.
+
+Two probes in `zeroize/examples/zeroize_asm_probes.rs` are each emitted as an independent symbol via `#[unsafe(no_mangle)] extern "C"` + `#[inline(never)]`:
+
+- `probe_zeroize_flat` runs `zeroize_flat` over a 64-byte buffer.
+- `probe_secret_drop` constructs `Secret<[u8; 32]>` and lets it drop.
+
+Unlike the constant-time probes, the wipe path is **not** checked for conditional-branch absence. Its loop bound is the compile-time constant `size_of`, so the loop branch is not secret-dependent and a branch check would be a false positive. Instead each zeroize probe must satisfy two predicates at once:
+
+$$ \#\{\text{volatile zero store}\} \ge 1 \quad\wedge\quad \#\{\text{memory fence}\} \ge 1 . $$
+
+If either count falls to zero, a dead-store regression (CWE-14 / CWE-316) has slipped in and the check fails. On aarch64 the zero store is `strb wzr` and the fence is `dsb sy`; on x86_64 they are `mov $0`-class stores and `mfence`.
+
+Disassembling `probe_zeroize_flat` on the host (`aarch64-apple-darwin`) shows the byte loop over `0x40 = 64` bytes, ending in the surviving fence and the `black_box` tail call (labels trimmed, comments added):
+
+```text
+<_probe_zeroize_flat>:
+    mov     x8, #0x0
+    cmp     x8, #0x40            ; i == 64 ? (counter bound, not secret)
+    b.eq    <+0x18>              ; loop exit
+    strb    wzr, [x0, x8]        ; volatile store: mem[p+i] <- 0  (survives DCE)
+    add     x8, x8, #0x1
+    b       <+0x4>
+    dsb     sy                   ; memory_barrier(): retire stores in hardware
+    b       <zeroize::barrier::aarch64::black_box>
+```
+
+`probe_secret_drop` materializes the 32-byte secret (`dup.16b` + `stp q0, q0`), wipes it through the same volatile loop, then emits the fence and the `black_box` pin:
+
+```text
+<_probe_secret_drop>:
+    ...
+    dup.16b v0, w0               ; secret = [seed; 32]
+    stp     q0, q0, [sp]
+    ...
+    cmp     x8, #0x20            ; i == 32 ?
+    b.eq    <+0x38>
+    strb    wzr, [x9, x8]        ; volatile byte wipe
+    add     x8, x8, #0x1
+    b       <+0x24>
+    dsb     sy                   ; memory_barrier()
+    mov     x0, sp
+    bl      <zeroize::barrier::aarch64::black_box>
+    ...
+    ret
+```
+
+A full run reports both probes preserving their store and their fence:
+
+```text
+>> zeroize probe (zero store + fence survival)
+    PASS probe_secret_drop  (zero store: 1, fence: 1)
+    PASS probe_zeroize_flat (zero store: 1, fence: 1)
+RESULT: PASS
+```
+
+To inspect a single symbol directly:
+
+```bash
+llvm-objdump -d --no-show-raw-insn target/<host-triple>/release/examples/zeroize_asm_probes
+```
+
+On macOS the binary is at `/Library/Developer/CommandLineTools/usr/bin/llvm-objdump`.
+
+### Counter-Example: DSE in Action
+
+DSE is a *permitted* transformation, and whether the optimizer exercises it depends on opt-level, compiler version, and surrounding code. That unpredictability is the hazard. The contrast below makes the freedom concrete: two functions wipe a 32-byte stack secret that becomes dead after a checksum is read from it, one with a plain store and one with `ptr::write_volatile`. Built at `opt-level = 3`:
+
+```text
+<_naive_wipe_dead>:                  ; plain `*b = 0`
+    ubfiz   w0, w0, #5, #3           ; return checksum (32*seed mod 256);
+    ret                              ; buffer + all 32 stores ELIMINATED (0 stores)
+
+<_volatile_wipe_dead>:               ; ptr::write_volatile(.., 0)
+    sub     sp, sp, #0x20
+    strb    wzr, [sp, #0x1f]         ; 32 volatile stores, every one preserved
+    strb    wzr, [sp, #0x1e]
+    ...                              ; (32 total)
+    strb    wzr, [sp, #0x1]
+    ubfiz   w0, w0, #5, #3
+    strb    wzr, [sp], #0x20
+    ret
+```
+
+The plain version collapses to two instructions: the optimizer proved the buffer dead and deleted all 32 stores, so the secret's bytes would survive on the stack. The volatile version keeps every store. Note that this same plain loop happens to survive at `opt-level = "z"` yet vanishes at `opt-level = 3`: survival of a non-volatile wipe is guaranteed at no optimization level. The crate therefore never relies on the optimizer's discretion. Volatile plus barriers force the wipe to survive across every opt-level, including the project's own `opt-level = "z"`.
+
+### Runtime Readback Verification
+
+The static check proves the stores are *emitted*; `zeroize/tests/zeroize_readback.rs` proves they *take effect*. Each test writes a non-zero pattern, captures the raw address, triggers the wipe (`Secret::drop`, `zeroize_flat`, `[T; N]::zeroize`, `&mut [T]::zeroize`), then reads the same address back and asserts every byte is zero:
+
+```text
+running 5 tests
+test secret_array_zeroized_on_drop ... ok
+test secret_into_inner_extracts_value ... ok
+test zeroize_flat_wipes_bytes ... ok
+test array_zeroize_wipes ... ok
+test slice_zeroize_wipes ... ok
+test result: ok. 5 passed
+```
+
+Together the two layers close the loop: readback confirms the wipe is correct *when it runs*, and the llvm-objdump check confirms the optimizer cannot silently drop it from the shipped binary.
+
 ---
 
 ## API
