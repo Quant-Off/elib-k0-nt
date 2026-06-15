@@ -42,6 +42,11 @@ const BASEPOINT_U: [u8; 32] = [
     9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum X25519Error {
+    LowOrderPoint,
+}
+
 pub struct SecretKey(Secret<[u8; 32]>);
 
 impl SecretKey {
@@ -58,18 +63,26 @@ impl SecretKey {
         PublicKey(public_bytes)
     }
 
-    pub fn diffie_hellman(&self, their_public: &PublicKey) -> SharedSecret {
+    pub fn diffie_hellman(
+        &self,
+        their_public: &PublicKey,
+    ) -> Result<SharedSecret, X25519Error> {
         let mut shared = x25519(self.0.expose(), &their_public.0);
         let result = SharedSecret(Secret::new(shared));
         shared.zeroize();
-        result
+        if result.is_zero() {
+            Err(X25519Error::LowOrderPoint)
+        } else {
+            Ok(result)
+        }
     }
 }
 
 pub struct PublicKey([u8; 32]);
 
 impl PublicKey {
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(mut bytes: [u8; 32]) -> Self {
+        bytes[31] &= 0x7f;
         PublicKey(bytes)
     }
 
@@ -122,6 +135,19 @@ fn montgomery_ladder(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
 
     let mut swap: u8 = 0;
 
+    let mut a = FieldElement::zero();
+    let mut aa = FieldElement::zero();
+    let mut b = FieldElement::zero();
+    let mut bb = FieldElement::zero();
+    let mut e = FieldElement::zero();
+    let mut c = FieldElement::zero();
+    let mut d = FieldElement::zero();
+    let mut da = FieldElement::zero();
+    let mut cb = FieldElement::zero();
+    let mut sum = FieldElement::zero();
+    let mut diff = FieldElement::zero();
+    let mut a24_e = FieldElement::zero();
+
     for pos in (0..255).rev() {
         let byte_idx = pos / 8;
         let bit_idx = pos % 8;
@@ -133,21 +159,21 @@ fn montgomery_ladder(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
         FieldElement::conditional_swap(&mut z_2, &mut z_3, choice);
         swap = k_t;
 
-        let a = x_2 + z_2;
-        let aa = a.square();
-        let b = x_2 - z_2;
-        let bb = b.square();
-        let e = aa - bb;
-        let c = x_3 + z_3;
-        let d = x_3 - z_3;
-        let da = d * a;
-        let cb = c * b;
-        let sum = da + cb;
-        let diff = da - cb;
+        a = x_2 + z_2;
+        aa = a.square();
+        b = x_2 - z_2;
+        bb = b.square();
+        e = aa - bb;
+        c = x_3 + z_3;
+        d = x_3 - z_3;
+        da = d * a;
+        cb = c * b;
+        sum = da + cb;
+        diff = da - cb;
         x_3 = sum.square();
         z_3 = x_1 * diff.square();
         x_2 = aa * bb;
-        let a24_e = mul_by_a24(e);
+        a24_e = mul_by_a24(e);
         z_2 = e * (aa + a24_e);
     }
 
@@ -169,6 +195,18 @@ fn montgomery_ladder(k: &[u8; 32], u: &[u8; 32]) -> [u8; 32] {
     z_2_inv.zeroize();
     result.zeroize();
     swap.zeroize();
+    a.zeroize();
+    aa.zeroize();
+    b.zeroize();
+    bb.zeroize();
+    e.zeroize();
+    c.zeroize();
+    d.zeroize();
+    da.zeroize();
+    cb.zeroize();
+    sum.zeroize();
+    diff.zeroize();
+    a24_e.zeroize();
 
     bytes
 }
@@ -266,7 +304,7 @@ mod tests {
         let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(alice_secret.diffie_hellman(&bob_pk));
+            storage.write(alice_secret.diffie_hellman(&bob_pk).expect("정상 공개키는 Ok 여야 함"));
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 32);
@@ -402,8 +440,8 @@ mod tests {
         let alice_pk = alice_sk.public_key();
         let bob_pk = bob_sk.public_key();
 
-        let alice_shared = alice_sk.diffie_hellman(&bob_pk);
-        let bob_shared = bob_sk.diffie_hellman(&alice_pk);
+        let alice_shared = alice_sk.diffie_hellman(&bob_pk).unwrap();
+        let bob_shared = bob_sk.diffie_hellman(&alice_pk).unwrap();
 
         assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 
@@ -481,10 +519,10 @@ mod tests {
 
         for low_order in &low_order_points {
             let public = PublicKey::from_bytes(*low_order);
-            let shared = secret.diffie_hellman(&public);
+            let result = secret.diffie_hellman(&public);
             assert!(
-                shared.is_zero(),
-                "low-order point should produce zero shared secret"
+                matches!(result, Err(X25519Error::LowOrderPoint)),
+                "low-order point should be rejected"
             );
         }
     }

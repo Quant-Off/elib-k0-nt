@@ -1,12 +1,11 @@
 #![allow(
     clippy::unusual_byte_groupings,
     clippy::wrong_self_convention,
-    clippy::needless_range_loop,
-    dead_code
+    clippy::needless_range_loop
 )]
 
 use constant_time::{Choice, CtSelOps};
-use core::ops::{Add, Mul, Neg, Sub};
+use core::ops::{Add, Mul, Sub};
 use zeroize::Zeroize;
 
 const MASK51: u64 = (1u64 << 51) - 1;
@@ -213,12 +212,6 @@ impl FieldElement {
         FieldElement([c0 as u64, c1 as u64, c2 as u64, c3 as u64, c4 as u64])
     }
 
-    pub fn is_zero(&self) -> Choice {
-        let t = self.reduce();
-        let or = t.0[0] | t.0[1] | t.0[2] | t.0[3] | t.0[4];
-        Choice::from_u8((or == 0) as u8)
-    }
-
     #[inline]
     pub fn conditional_swap(a: &mut Self, b: &mut Self, choice: Choice) {
         for i in 0..5 {
@@ -269,15 +262,6 @@ impl Sub for FieldElement {
     }
 }
 
-impl Neg for FieldElement {
-    type Output = Self;
-
-    #[inline]
-    fn neg(self) -> Self {
-        FieldElement::zero() - self
-    }
-}
-
 impl Mul for FieldElement {
     type Output = Self;
 
@@ -291,11 +275,11 @@ impl PartialEq for FieldElement {
     fn eq(&self, other: &Self) -> bool {
         let a = self.reduce();
         let b = other.reduce();
-        a.0[0] == b.0[0]
-            && a.0[1] == b.0[1]
-            && a.0[2] == b.0[2]
-            && a.0[3] == b.0[3]
-            && a.0[4] == b.0[4]
+        let mut acc = 0u64;
+        for i in 0..5 {
+            acc |= a.0[i] ^ b.0[i];
+        }
+        acc == 0
     }
 }
 
