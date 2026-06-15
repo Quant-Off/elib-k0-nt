@@ -10,7 +10,7 @@ use crate::poly::{Poly, PolyVec};
 use crate::sample::{expand_a, expand_mask, sample_in_ball};
 use crate::{D, Q};
 use sha3::{SHAKE256, XOF};
-use zeroize::Secret;
+use zeroize::{Secret, Zeroize};
 
 fn inf_norm_vec<const DIM: usize>(v: &PolyVec<DIM>) -> i32 {
     let mut max = 0i32;
@@ -258,7 +258,7 @@ pub fn sign_internal<
     shake_mu.finalize_into(mu.expose_mut());
 
     let mut shake_rho_pp = SHAKE256::new();
-    shake_rho_pp.update(&sk.k_seed);
+    shake_rho_pp.update(sk.k_seed.expose());
     shake_rho_pp.update(rnd);
     shake_rho_pp.update(mu.expose());
     let mut rho_pp = Secret::new([0u8; 64]);
@@ -271,7 +271,7 @@ pub fn sign_internal<
     let w1_len = w1_bytes_len::<K>(GAMMA2);
 
     for _ in 0..MAX_ITER {
-        let y = expand_mask::<L>(rho_pp.expose(), kappa, GAMMA1)?;
+        let mut y = expand_mask::<L>(rho_pp.expose(), kappa, GAMMA1)?;
 
         let mut y_hat = y;
         y_hat.ntt();
@@ -295,34 +295,73 @@ pub fn sign_internal<
 
         let mut cs1 = poly_mul_polyvec::<L>(c_hat, &s1_hat);
         cs1.intt();
-        let z = y.add(&cs1);
+        let mut z = y.add(&cs1);
 
         let mut cs2 = poly_mul_polyvec::<K>(c_hat, &s2_hat);
         cs2.intt();
-        let w_minus_cs2 = w.sub(&cs2);
-        let r0 = low_bits_vec::<K>(&w_minus_cs2, GAMMA2);
+        let mut w_minus_cs2 = w.sub(&cs2);
+        let mut r0 = low_bits_vec::<K>(&w_minus_cs2, GAMMA2);
 
         if inf_norm_vec::<L>(&z) >= GAMMA1 - BETA || inf_norm_vec::<K>(&r0) >= GAMMA2 - BETA {
             kappa = kappa.wrapping_add(L as u16);
+            y.zeroize();
+            y_hat.zeroize();
+            w.zeroize();
+            cs1.zeroize();
+            z.zeroize();
+            cs2.zeroize();
+            w_minus_cs2.zeroize();
+            r0.zeroize();
             continue;
         }
 
         let mut ct0 = poly_mul_polyvec::<K>(c_hat, &t0_hat);
         ct0.intt();
 
-        let neg_ct0 = polyvec_neg::<K>(&ct0);
-        let w_minus_cs2_plus_ct0 = w_minus_cs2.add(&ct0);
+        let mut neg_ct0 = polyvec_neg::<K>(&ct0);
+        let mut w_minus_cs2_plus_ct0 = w_minus_cs2.add(&ct0);
         let (h, h_count) = make_hint_vec::<K>(&neg_ct0, &w_minus_cs2_plus_ct0, GAMMA2);
 
         if inf_norm_vec::<K>(&ct0) >= GAMMA2 || h_count > OMEGA {
             kappa = kappa.wrapping_add(L as u16);
+            y.zeroize();
+            y_hat.zeroize();
+            w.zeroize();
+            cs1.zeroize();
+            z.zeroize();
+            cs2.zeroize();
+            w_minus_cs2.zeroize();
+            r0.zeroize();
+            ct0.zeroize();
+            neg_ct0.zeroize();
+            w_minus_cs2_plus_ct0.zeroize();
             continue;
         }
 
         let sig =
             sig_encode::<K, L, LAMBDA, SIG_LEN>(&c_tilde_buf[..c_tilde_len], &z, &h, GAMMA1, OMEGA);
+
+        y.zeroize();
+        y_hat.zeroize();
+        w.zeroize();
+        cs1.zeroize();
+        z.zeroize();
+        cs2.zeroize();
+        w_minus_cs2.zeroize();
+        r0.zeroize();
+        ct0.zeroize();
+        neg_ct0.zeroize();
+        w_minus_cs2_plus_ct0.zeroize();
+        s1_hat.zeroize();
+        s2_hat.zeroize();
+        t0_hat.zeroize();
+
         return Ok(sig);
     }
+
+    s1_hat.zeroize();
+    s2_hat.zeroize();
+    t0_hat.zeroize();
 
     Err(Error::SigningFailed)
 }

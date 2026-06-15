@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::sbox::{inv_sub_bytes_block, sub_bytes_block};
+use zeroize::Zeroize;
 
 const NB: usize = 4;
 const NR: usize = 14;
@@ -46,6 +47,7 @@ fn sub_bytes(state: &mut State) {
             state[r][c] = bytes[r * 4 + c];
         }
     }
+    bytes.zeroize();
 }
 
 #[inline]
@@ -62,6 +64,7 @@ fn inv_sub_bytes(state: &mut State) {
             state[r][c] = bytes[r * 4 + c];
         }
     }
+    bytes.zeroize();
 }
 
 #[inline]
@@ -200,7 +203,9 @@ pub fn encrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8
     shift_rows(&mut state);
     add_round_key(&mut state, &round_keys[NR * NB..(NR + 1) * NB]);
 
-    state_to_block(&state)
+    let out = state_to_block(&state);
+    state.zeroize();
+    out
 }
 
 pub fn decrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8; 16] {
@@ -219,5 +224,7 @@ pub fn decrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8
     inv_sub_bytes(&mut state);
     add_round_key(&mut state, &round_keys[0..NB]);
 
-    state_to_block(&state)
+    let out = state_to_block(&state);
+    state.zeroize();
+    out
 }

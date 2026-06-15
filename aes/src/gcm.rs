@@ -1,9 +1,13 @@
 use crate::AES256;
 use crate::ghash::GHash;
+use constant_time::{Choice, CtEqOps};
 use zeroize::Zeroize;
 
 pub const GCM_TAG_SIZE: usize = 16;
 pub const GCM_NONCE_SIZE: usize = 12;
+
+const GCM_MAX_INPUT_LEN: u64 = (1 << 36) - 32;
+const GCM_MAX_AAD_LEN: u64 = (1 << 61) - 1;
 
 fn inc32(block: &mut [u8; 16]) {
     let mut carry = 1u16;
@@ -32,20 +36,23 @@ impl AES256GCM {
         let mut offset = 0;
 
         while offset + 16 <= input.len() {
-            let keystream = self.cipher.encrypt(&cb);
+            let mut keystream = self.cipher.encrypt(&cb);
             for i in 0..16 {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
             inc32(&mut cb);
+            keystream.zeroize();
             offset += 16;
         }
 
         if offset < input.len() {
-            let keystream = self.cipher.encrypt(&cb);
+            let mut keystream = self.cipher.encrypt(&cb);
             for i in 0..(input.len() - offset) {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
+            keystream.zeroize();
         }
+        cb.zeroize();
     }
 
     fn compute_j0(&self, nonce: &[u8; GCM_NONCE_SIZE]) -> [u8; 16] {
@@ -61,16 +68,19 @@ impl AES256GCM {
         ghash.update_padded(aad);
         ghash.update_padded(ciphertext);
 
-        let len_block = Self::len_block(aad.len(), ciphertext.len());
+        let mut len_block = Self::len_block(aad.len(), ciphertext.len());
         ghash.update(&len_block);
 
-        let s = ghash.finalize();
-        let e_j0 = self.cipher.encrypt(j0);
+        let mut s = ghash.finalize();
+        let mut e_j0 = self.cipher.encrypt(j0);
 
         let mut tag = [0u8; 16];
         for i in 0..16 {
             tag[i] = s[i] ^ e_j0[i];
         }
+        s.zeroize();
+        e_j0.zeroize();
+        len_block.zeroize();
         tag
     }
 
@@ -91,13 +101,29 @@ impl AES256GCM {
         ciphertext: &mut [u8],
         tag: &mut [u8; GCM_TAG_SIZE],
     ) {
-        let j0 = self.compute_j0(nonce);
+        assert!(
+            ciphertext.len() >= plaintext.len(),
+            "암호문 버퍼가 평문보다 작아 무음 절단 발생"
+        );
+        assert!(
+            plaintext.len() as u64 <= GCM_MAX_INPUT_LEN,
+            "SP 800-38D 평문 길이 한계(2^39-256 비트) 초과로 카운터 재사용 발생"
+        );
+        assert!(
+            aad.len() as u64 <= GCM_MAX_AAD_LEN,
+            "SP 800-38D AAD 길이 한계(2^64-1 비트) 초과"
+        );
+
+        let mut j0 = self.compute_j0(nonce);
         let mut icb = j0;
         inc32(&mut icb);
 
         self.gctr(&icb, plaintext, ciphertext);
 
         *tag = self.compute_tag(aad, &ciphertext[..plaintext.len()], &j0);
+
+        icb.zeroize();
+        j0.zeroize();
     }
 
     pub fn decrypt(
@@ -108,22 +134,41 @@ impl AES256GCM {
         tag: &[u8; GCM_TAG_SIZE],
         plaintext: &mut [u8],
     ) -> bool {
-        let j0 = self.compute_j0(nonce);
+        assert!(
+            plaintext.len() >= ciphertext.len(),
+            "평문 버퍼가 암호문보다 작아 무음 절단 발생"
+        );
+        assert!(
+            ciphertext.len() as u64 <= GCM_MAX_INPUT_LEN,
+            "SP 800-38D 암호문 길이 한계(2^39-256 비트) 초과로 카운터 재사용 발생"
+        );
+        assert!(
+            aad.len() as u64 <= GCM_MAX_AAD_LEN,
+            "SP 800-38D AAD 길이 한계(2^64-1 비트) 초과"
+        );
 
-        let expected_tag = self.compute_tag(aad, ciphertext, &j0);
+        let mut j0 = self.compute_j0(nonce);
 
-        let mut diff = 0u8;
+        let mut expected_tag = self.compute_tag(aad, ciphertext, &j0);
+
+        let mut eq = Choice::from_u8(1);
         for i in 0..16 {
-            diff |= tag[i] ^ expected_tag[i];
+            eq &= CtEqOps::eq(&tag[i], &expected_tag[i]);
         }
+        let authentic = eq.unwrap_u8() == 1;
+        expected_tag.zeroize();
 
-        if diff != 0 {
+        if !authentic {
+            j0.zeroize();
             return false;
         }
 
         let mut icb = j0;
         inc32(&mut icb);
         self.gctr(&icb, ciphertext, plaintext);
+
+        icb.zeroize();
+        j0.zeroize();
 
         true
     }

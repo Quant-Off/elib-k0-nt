@@ -1,4 +1,5 @@
 use crate::AES256;
+use zeroize::Zeroize;
 
 pub const CBC_IV_SIZE: usize = 16;
 
@@ -15,8 +16,14 @@ impl AES256CBC {
     }
 
     pub fn encrypt(&self, iv: &[u8; CBC_IV_SIZE], plaintext: &[u8], ciphertext: &mut [u8]) {
-        debug_assert!(plaintext.len().is_multiple_of(16));
-        debug_assert!(ciphertext.len() >= plaintext.len());
+        assert!(
+            plaintext.len().is_multiple_of(16),
+            "평문 길이가 블록 크기의 배수가 아님"
+        );
+        assert!(
+            ciphertext.len() >= plaintext.len(),
+            "암호문 버퍼가 평문보다 작아 무음 절단 발생"
+        );
 
         let mut prev = *iv;
 
@@ -31,12 +38,19 @@ impl AES256CBC {
             let encrypted = self.cipher.encrypt(&block);
             ct_chunk.copy_from_slice(&encrypted);
             prev = encrypted;
+            block.zeroize();
         }
     }
 
     pub fn decrypt(&self, iv: &[u8; CBC_IV_SIZE], ciphertext: &[u8], plaintext: &mut [u8]) {
-        debug_assert!(ciphertext.len().is_multiple_of(16));
-        debug_assert!(plaintext.len() >= ciphertext.len());
+        assert!(
+            ciphertext.len().is_multiple_of(16),
+            "암호문 길이가 블록 크기의 배수가 아님"
+        );
+        assert!(
+            plaintext.len() >= ciphertext.len(),
+            "평문 버퍼가 암호문보다 작아 무음 절단 발생"
+        );
 
         let mut prev = *iv;
 
@@ -44,13 +58,15 @@ impl AES256CBC {
             let mut block = [0u8; 16];
             block.copy_from_slice(ct_chunk);
 
-            let decrypted = self.cipher.decrypt(&block);
+            let mut decrypted = self.cipher.decrypt(&block);
 
             for i in 0..16 {
                 pt_chunk[i] = decrypted[i] ^ prev[i];
             }
 
             prev.copy_from_slice(ct_chunk);
+            decrypted.zeroize();
+            block.zeroize();
         }
     }
 }

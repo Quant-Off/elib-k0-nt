@@ -16,6 +16,10 @@ You can always refer to the [INTRODUCTION_EN.md](INTRODUCTION_EN.md) file for a 
 
 Additionally, information about what scope AI agents are used for in this project, what parts they actually modify, and the skills and prompts used is documented in [AI_SCOPE_EN.md](AI_SCOPE_EN.md).
 
+# Release `1.1.0`
+
+We are preparing a release to correct several issues and compliance-related implementation errors that were not discovered in the previous `1.0.0` release. This work is performed based on meticulous and systematic cross-validation, and the records can be found in [this document (Korean)](cross-confirm.md). That document will be removed once the `1.1.0` release is published.
+
 # License
 
 This project is under the [MIT LICENSE](LICENSE).

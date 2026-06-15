@@ -1,7 +1,10 @@
 use crate::AES256;
+use zeroize::Zeroize;
 
 pub const CTR_NONCE_SIZE: usize = 12;
 pub const CTR_IV_SIZE: usize = 16;
+
+const CTR_MAX_INPUT_LEN: u64 = 1 << 36;
 
 fn inc32(block: &mut [u8; 16]) {
     let mut carry = 1u16;
@@ -28,34 +31,52 @@ impl AES256CTR {
         let mut offset = 0;
 
         while offset + 16 <= input.len() {
-            let keystream = self.cipher.encrypt(counter);
+            let mut keystream = self.cipher.encrypt(counter);
             for i in 0..16 {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
             inc32(counter);
+            keystream.zeroize();
             offset += 16;
         }
 
         if offset < input.len() {
-            let keystream = self.cipher.encrypt(counter);
+            let mut keystream = self.cipher.encrypt(counter);
             for i in 0..(input.len() - offset) {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
+            keystream.zeroize();
         }
     }
 
     pub fn apply_iv(&self, iv: &[u8; CTR_IV_SIZE], input: &[u8], output: &mut [u8]) {
-        debug_assert!(output.len() >= input.len());
+        assert!(
+            output.len() >= input.len(),
+            "출력 버퍼가 입력보다 작아 무음 절단 발생"
+        );
+        assert!(
+            input.len() as u64 <= CTR_MAX_INPUT_LEN,
+            "입력 길이 한계(2^32 블록) 초과로 카운터 재사용 발생"
+        );
         let mut counter = *iv;
         self.apply_internal(&mut counter, input, output);
+        counter.zeroize();
     }
 
     pub fn apply(&self, nonce: &[u8; CTR_NONCE_SIZE], input: &[u8], output: &mut [u8]) {
-        debug_assert!(output.len() >= input.len());
+        assert!(
+            output.len() >= input.len(),
+            "출력 버퍼가 입력보다 작아 무음 절단 발생"
+        );
+        assert!(
+            input.len() as u64 <= CTR_MAX_INPUT_LEN,
+            "입력 길이 한계(2^32 블록) 초과로 카운터 재사용 발생"
+        );
         let mut counter = [0u8; 16];
         counter[..12].copy_from_slice(nonce);
         counter[12..16].copy_from_slice(&1u32.to_be_bytes());
         self.apply_internal(&mut counter, input, output);
+        counter.zeroize();
     }
 
     #[inline]

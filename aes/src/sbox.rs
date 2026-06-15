@@ -15,6 +15,8 @@
 
 #![allow(clippy::many_single_char_names, clippy::similar_names)]
 
+use zeroize::Zeroize;
+
 // 16바이트 블록을 [u32; 8]비트슬라이스 평면으로 변환
 // q[k]의 i번째 비트 = bytes[i]의 k번째 비트
 #[inline]
@@ -227,6 +229,7 @@ pub fn sub_bytes_block(bytes: &mut [u8; 16]) {
     let mut q = bitslice_block(bytes);
     bitsliced_sbox(&mut q);
     *bytes = unbitslice_block(&q);
+    q.zeroize();
 }
 
 /// 16 바이트 블록 InvSubBytes 를 비트슬라이스 BP 회로로 일괄 적용합니다.
@@ -234,6 +237,7 @@ pub fn inv_sub_bytes_block(bytes: &mut [u8; 16]) {
     let mut q = bitslice_block(bytes);
     bitsliced_inv_sbox(&mut q);
     *bytes = unbitslice_block(&q);
+    q.zeroize();
 }
 
 /// 단일 바이트 S-box. 키 스케줄 (sub_word) 에서 호출됩니다.
@@ -250,6 +254,7 @@ pub fn sub_byte(x: u8) -> u8 {
     for (k, plane) in q.iter().enumerate() {
         out |= ((*plane & 1) as u8) << k;
     }
+    q.zeroize();
     out
 }
 

@@ -56,14 +56,14 @@ impl KeccakState {
     // Keccak-f[1600] — 24라운드 순열
     pub(crate) fn keccak_f1600(state: &mut [u64; 25]) {
         let mut tmp = [0u64; 25];
+        let mut c = [0u64; 5];
+        let mut d = [0u64; 5];
 
         for &rc in &KECCAK_ROUND_CONSTANTS {
             // θ (Theta)
-            let mut c = [0u64; 5];
             for x in 0..5 {
                 c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
             }
-            let mut d = [0u64; 5];
             for x in 0..5 {
                 d[x] = c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1);
             }
@@ -89,18 +89,21 @@ impl KeccakState {
             state[0] ^= rc;
         }
 
-        // 스택 중간 상태 소거
+        // 스택 중간 상태 소거 (θ 열 패리티 포함)
         tmp.zeroize();
+        c.zeroize();
+        d.zeroize();
     }
 
     // 흡수
     // `block[..rate_bytes]`를 상태 레인에 XOR한 다음 순열 적용
     // 모든 SHA-3 / SHAKE 속도는 8바이트의 정확한 배수
-    fn absorb_block(&mut self, block: &[u8]) {
+    fn absorb_block(state: &mut [u64; 25], block: &[u8]) {
         let rate_words = block.len() / 8;
-        for i in 0..rate_words {
+        let mut word = 0u64;
+        for (i, lane) in state.iter_mut().enumerate().take(rate_words) {
             let o = i * 8;
-            let word = u64::from_le_bytes([
+            word = u64::from_le_bytes([
                 block[o],
                 block[o + 1],
                 block[o + 2],
@@ -110,9 +113,11 @@ impl KeccakState {
                 block[o + 6],
                 block[o + 7],
             ]);
-            self.state[i] ^= word;
+            *lane ^= word;
         }
-        Self::keccak_f1600(&mut self.state);
+        // 마지막 메시지 워드 스택 잔존 소거
+        word.zeroize();
+        Self::keccak_f1600(state);
     }
 
     pub(crate) fn update(&mut self, data: &[u8]) {
@@ -136,10 +141,8 @@ impl KeccakState {
             i += chunk_len;
 
             if self.buffer_len == self.rate_bytes {
-                // 역참조 복사
-                let block = Secret::new(*self.buffer.expose());
-                self.absorb_block(&block[..self.rate_bytes]);
-                // block 스코프 종료 -> 소거
+                // 서로 다른 필드 차용이므로 버퍼 사본 없이 직접 흡수
+                Self::absorb_block(&mut self.state, &self.buffer[..self.rate_bytes]);
                 self.buffer_len = 0;
             }
         }
@@ -166,7 +169,7 @@ impl KeccakState {
         block[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
         block[self.buffer_len] = self.domain;
         block[rate - 1] ^= 0x80;
-        self.absorb_block(&block[..rate]);
+        Self::absorb_block(&mut self.state, &block[..rate]);
         // block 스코프 종료 -> Secret::Drop 으로 소거
         self.buffer_len = 0;
     }
@@ -179,15 +182,18 @@ impl KeccakState {
     fn squeeze_fixed(&self, output_len: usize, out: &mut [u8; 64]) {
         let full_words = output_len / 8;
         let rem_bytes = output_len % 8;
+        let mut word_bytes = [0u8; 8];
         for i in 0..full_words {
-            let word_bytes = self.state[i].to_le_bytes();
+            word_bytes = self.state[i].to_le_bytes();
             out[i * 8..i * 8 + 8].copy_from_slice(&word_bytes);
         }
         if rem_bytes > 0 {
-            let word_bytes = self.state[full_words].to_le_bytes();
+            word_bytes = self.state[full_words].to_le_bytes();
             out[full_words * 8..full_words * 8 + rem_bytes]
                 .copy_from_slice(&word_bytes[..rem_bytes]);
         }
+        // 다이제스트 워드 스택 사본 소거
+        word_bytes.zeroize();
     }
 
     // 호출자가 제공한 버퍼로 스퀴즈, 다중 블록 XOF 출력을 위해 다시 순열 적용
@@ -195,12 +201,13 @@ impl KeccakState {
         let output_len = out.len();
         let rate_words = self.rate_bytes / 8;
         let mut pos = 0usize;
+        let mut word_bytes = [0u8; 8];
         while pos < output_len {
             for word_idx in 0..rate_words {
                 if pos >= output_len {
                     break;
                 }
-                let word_bytes = self.state[word_idx].to_le_bytes();
+                word_bytes = self.state[word_idx].to_le_bytes();
                 let remain: usize = output_len - pos;
                 // CT take = min(remain, 8)
                 let is_ge: Choice = CtGreeter::gt(&remain, &8usize) | CtEqOps::eq(&remain, &8usize);
@@ -212,6 +219,8 @@ impl KeccakState {
                 Self::keccak_f1600(&mut self.state);
             }
         }
+        // XOF 출력 워드 스택 사본 소거
+        word_bytes.zeroize();
     }
 
     // 공개 완료 진입점
