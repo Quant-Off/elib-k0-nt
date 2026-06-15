@@ -6,10 +6,7 @@
 #![allow(
     clippy::unusual_byte_groupings,
     clippy::wrong_self_convention,
-    clippy::needless_range_loop,
-    dead_code,
-    unused_variables,
-    unused_mut
+    clippy::needless_range_loop
 )]
 
 use core::ops::{Add, Mul, Neg, Sub};
@@ -162,68 +159,8 @@ impl FieldElement {
     ///
     /// 페르마 소정리 사용: a^(-1) = a^(p-2) mod p
     pub fn invert(&self) -> Self {
-        // p-2 = 2^255 - 21의 제곱-곱셈 체인
+        // p - 2 = 2^255 - 21. ref10 스타일 addition chain (square-and-multiply)
         let x1 = *self;
-        let x2 = x1.square();
-        let x4 = x2.square().square();
-        let x5 = x4 * x1;
-        let x10 = x5.square().square().square().square().square();
-        let x20 = x10
-            .square()
-            .square()
-            .square()
-            .square()
-            .square()
-            .square()
-            .square()
-            .square()
-            .square()
-            .square();
-        let x40 = {
-            let mut t = x20;
-            for _ in 0..20 {
-                t = t.square();
-            }
-            t
-        };
-        let x50 = x40 * x10;
-        let x100 = {
-            let mut t = x50;
-            for _ in 0..50 {
-                t = t.square();
-            }
-            t
-        };
-        let x200 = {
-            let mut t = x100;
-            for _ in 0..100 {
-                t = t.square();
-            }
-            t
-        };
-        let x250 = {
-            let mut t = x200 * x50;
-            for _ in 0..50 {
-                t = t.square();
-            }
-            t
-        };
-
-        // x^(2^255 - 21) = x250 * x5
-        // 그런데 2^255 - 21 = p - 2가 아님!
-        // p - 2 = 2^255 - 21
-
-        // 올바른 지수: p-2 = 2^255 - 19 - 2 = 2^255 - 21
-        // 비트 분해로 계산
-
-        // 더 간단한 방법: 반복 제곱
-        let mut result = FieldElement::one();
-        let mut base = *self;
-
-        // p - 2 = 0x7FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFEB
-        // 바이너리로 분해하여 square-and-multiply
-
-        // 최적화된 체인 (Curve25519 스타일)
         let z2 = x1.square();
         let z4 = z2.square();
         let z8 = z4.square();
@@ -339,13 +276,6 @@ impl FieldElement {
     pub fn is_negative(&self) -> bool {
         let bytes = self.to_bytes();
         (bytes[0] & 1) == 1
-    }
-
-    /// 조건부 부정: choice가 1이면 부정합니다.
-    #[inline]
-    pub fn conditional_negate(&self, choice: u8) -> Self {
-        let neg = -*self;
-        Self::conditional_select(self, &neg, choice)
     }
 
     /// 조건부 선택: choice가 1이면 b, 0이면 a를 반환합니다.

@@ -199,7 +199,8 @@ impl Signature {
 /// `Secret` Drop 또는 명시적 `zeroize()` 호출로 소거됩니다.
 pub fn sign(message: &[u8], secret_key: &SecretKey) -> Signature {
     let expanded = secret_key.expand();
-    let public_key = PublicKey::from(secret_key);
+    // 공개키 A 는 이미 계산한 확장 스칼라에서 직접 유도 (expand 중복 호출 제거)
+    let public_key = PublicKey(EdwardsPoint::basepoint_mul(&expanded.scalar).to_bytes());
 
     // r = SHA512(nonce || message) mod L  (r 은 비밀 nonce)
     let mut h1 = SHA512::new();
@@ -482,5 +483,75 @@ mod tests {
 
         let signature = keypair1.sign(message);
         assert!(verify(message, &signature, &keypair2.public).is_err());
+    }
+
+    fn decode_hex<const N: usize>(s: &str) -> [u8; N] {
+        let mut out = [0u8; N];
+        let b = s.as_bytes();
+        for i in 0..N {
+            let hi = (b[2 * i] as char).to_digit(16).unwrap() as u8;
+            let lo = (b[2 * i + 1] as char).to_digit(16).unwrap() as u8;
+            out[i] = (hi << 4) | lo;
+        }
+        out
+    }
+
+    fn kat(seed_h: &str, pk_h: &str, msg: &[u8], sig_h: &str) {
+        let seed = decode_hex::<32>(seed_h);
+        let exp_pk = decode_hex::<32>(pk_h);
+        let exp_sig = decode_hex::<64>(sig_h);
+
+        let sk = SecretKey::from_bytes(&seed);
+        let pk = PublicKey::from(&sk);
+        assert_eq!(pk.as_bytes(), &exp_pk, "공개키 KAT 불일치");
+
+        let sig = sign(msg, &sk);
+        assert_eq!(sig.as_bytes(), &exp_sig, "서명 KAT 불일치");
+
+        let pk2 = PublicKey::from_bytes(&exp_pk);
+        let sig2 = Signature::from_bytes(&exp_sig);
+        assert!(verify(msg, &sig2, &pk2).is_ok(), "검증 KAT 실패");
+    }
+
+    // RFC 8032 Section 7.1 표준 시험 벡터 (TEST 1 - 3)
+    #[test]
+    fn test_rfc8032_kat() {
+        kat(
+            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            &[],
+            "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+        );
+        kat(
+            "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+            &[0x72],
+            "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+        );
+        kat(
+            "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+            "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+            &[0xaf, 0x82],
+            "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
+        );
+    }
+
+    // 비정규 점 인코딩 거부 (RFC 8032 5.1.3): R 의 y = p 표현은 거부되어야 함
+    #[test]
+    fn test_reject_noncanonical_point() {
+        let pk = PublicKey::from_bytes(&decode_hex::<32>(
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        ));
+        let mut sig = [0u8; 64];
+        sig[0] = 0xed;
+        sig[1..31].fill(0xff);
+        sig[31] = 0x7f; // R = y = p (비정규)
+        sig[32] = 1; // s = 1 (정규)
+        let sig = Signature::from_bytes(&sig);
+        assert_eq!(
+            verify(&[], &sig, &pk),
+            Err(Ed25519Error::MalformedSignature),
+            "비정규 R 인코딩이 거부되어야 함"
+        );
     }
 }
