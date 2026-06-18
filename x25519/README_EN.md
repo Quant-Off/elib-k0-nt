@@ -1,5 +1,7 @@
 # X25519 Key-Agreement Module
 
+[![Language](https://img.shields.io/badge/README-Korean_Ver-blue?style=for-the-badge)](README.md)
+
 X25519 is an Elliptic-Curve Diffie-Hellman (ECDH) function whose security rests on two things: the math of the Curve25519 Montgomery curve, and the guarantee that no secret ever influences the timing or memory-access pattern of the code that handles it. This document gives a technical account of both — the protocol the crate implements, and the assembly-level reasons the implementation does not leak the private scalar.
 
 ---
