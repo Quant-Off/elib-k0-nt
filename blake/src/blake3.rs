@@ -24,7 +24,7 @@ pub const OUT_LEN: usize = 32;
 ///
 /// # Security Note
 /// 키워드와 CV 스택은 `Secret`으로 보호되어 Drop 시 자동 소거됩니다.
-/// 키드 모드(`new_keyed`)는 키를 IV로 변환하므로 키 바이트가 스택에 노출되지 않습니다.
+/// 키드 모드(`new_keyed`)는 키 워드를 즉시 `Secret`으로 감싸 평문 사본을 남기지 않습니다.
 pub struct Blake3 {
     chunk_state: ChunkState,
     key_words: Secret<[u32; 8]>,
@@ -48,15 +48,20 @@ impl Blake3 {
     /// 키드 BLAKE3 인스턴스를 생성하는 함수입니다.
     ///
     /// # Arguments
-    /// `key` — 정확히 32바이트
+    /// - `key`: 정확히 32바이트 키
+    ///
+    /// # Security Note
+    /// 키를 워드로 변환한 중간값은 생성 즉시 `Secret`으로 감싸지며 평문
+    /// 사본이 함수 프레임에 잔류하지 않습니다. 키는 KEYED_HASH 플래그와 함께
+    /// IV 를 대체하는 초기 체이닝 값으로만 사용됩니다.
     pub fn new_keyed(key: &[u8; 32]) -> Self {
         let key_words = words_from_le_bytes_32(key);
         Self {
-            chunk_state: ChunkState::new(&key_words, 0, KEYED_HASH),
-            key_words: Secret::new(key_words),
+            chunk_state: ChunkState::new(key_words.expose(), 0, KEYED_HASH),
             cv_stack: Secret::new([[0u32; 8]; 54]),
             cv_stack_len: 0,
             flags: KEYED_HASH,
+            key_words,
         }
     }
 
@@ -285,9 +290,11 @@ impl Output {
                 self.flags | ROOT,
             );
             for word in words.expose().iter() {
-                let bytes = word.to_le_bytes();
+                let mut bytes = word.to_le_bytes();
                 let take = (out.len() - pos).min(4);
                 out[pos..pos + take].copy_from_slice(&bytes[..take]);
+                // bytes[take..] 는 출력에 쓰이지 않은 루트 압축 상태 잔여분이므로 소거
+                bytes.zeroize();
                 pos += take;
                 if pos >= out.len() {
                     return;
@@ -403,9 +410,9 @@ fn words_from_le_bytes_64(bytes: &[u8; BLOCK_LEN]) -> Secret<[u32; 16]> {
     }))
 }
 
-fn words_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
-    core::array::from_fn(|i| {
+fn words_from_le_bytes_32(bytes: &[u8; 32]) -> Secret<[u32; 8]> {
+    Secret::new(core::array::from_fn(|i| {
         let s = i * 4;
         u32::from_le_bytes([bytes[s], bytes[s + 1], bytes[s + 2], bytes[s + 3]])
-    })
+    }))
 }

@@ -45,7 +45,7 @@ pub struct Blake2b {
 impl Blake2b {
     /// 비키드(plain) BLAKE2b 인스턴스를 생성하는 함수입니다.
     ///
-    /// # Errors
+    /// # Panics
     /// `hash_len`이 1..=64 범위를 벗어나거나 SecureBuffer 할당 실패 시 패닉.
     pub fn new(hash_len: usize) -> Self {
         assert!((1..=64).contains(&hash_len), "hash_len must be 1..=64");
@@ -57,7 +57,7 @@ impl Blake2b {
     /// # Security Note
     /// 키는 128바이트 패딩 후 첫 번째 블록으로 처리됩니다.
     ///
-    /// # Errors
+    /// # Panics
     /// `key`가 1..=64 범위를 벗어나거나 `hash_len`이 범위를 벗어나면 패닉.
     pub fn new_keyed(hash_len: usize, key: &[u8]) -> Self {
         assert!((1..=64).contains(&hash_len), "hash_len must be 1..=64");
@@ -135,9 +135,11 @@ impl Blake2b {
         let out_slice = out.as_mut_slice();
         let mut pos = 0;
         for word in self.h.expose().iter() {
-            let bytes = word.to_le_bytes();
+            let mut bytes = word.to_le_bytes();
             let take = (self.hash_len - pos).min(8);
             out_slice[pos..pos + take].copy_from_slice(&bytes[..take]);
+            // bytes[take..] 는 출력 길이 미달 시 출력되지 않은 h 잔여 바이트이므로 소거
+            bytes.zeroize();
             pos += take;
             if pos >= self.hash_len {
                 break;
