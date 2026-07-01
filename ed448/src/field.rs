@@ -329,32 +329,13 @@ impl Sub for FieldElement {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        let a = self.reduce();
-        let b = rhs.reduce();
+        // 2*p 바이어스를 더해 분기 없이 언더플로 방지 (상수시간)
+        // 약하게 축소된 limb 은 2*P[i] 미만이므로 limb 단위 음수 발생 안 함
         let mut result = [0u64; LIMBS];
-        let mut borrow = 0i64;
-
         for i in 0..LIMBS {
-            let diff = (a.0[i] as i64) - (b.0[i] as i64) - borrow;
-            if diff < 0 {
-                result[i] = ((diff + (MASK as i64) + 1) as u64) & MASK;
-                borrow = 1;
-            } else {
-                result[i] = (diff as u64) & MASK;
-                borrow = 0;
-            }
+            result[i] = (self.0[i] + 2 * P[i]) - rhs.0[i];
         }
-
-        if borrow != 0 {
-            let mut carry = 0i64;
-            for i in 0..LIMBS {
-                let sum = (result[i] as i64) + (P[i] as i64) + carry;
-                result[i] = (sum as u64) & MASK;
-                carry = sum >> LIMB_BITS;
-            }
-        }
-
-        FieldElement(result)
+        FieldElement(result).weak_reduce()
     }
 }
 
@@ -363,20 +344,7 @@ impl Neg for FieldElement {
 
     #[inline]
     fn neg(self) -> Self {
-        let t = self.reduce();
-        let mut result = [0u64; LIMBS];
-        let mut borrow = 0i64;
-        for i in 0..LIMBS {
-            let diff = (P[i] as i64) - (t.0[i] as i64) - borrow;
-            if diff < 0 {
-                result[i] = ((diff + (MASK as i64) + 1) as u64) & MASK;
-                borrow = 1;
-            } else {
-                result[i] = (diff as u64) & MASK;
-                borrow = 0;
-            }
-        }
-        FieldElement(result)
+        FieldElement::zero() - self
     }
 }
 

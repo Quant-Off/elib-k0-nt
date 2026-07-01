@@ -74,6 +74,13 @@ impl EdwardsPoint {
         }
 
         let y = FieldElement::from_bytes(&y_bytes);
+
+        // 비정규 인코딩 거부 (RFC 8032 5.2.3: y < p 이어야 함)
+        // 정규 직렬화 결과가 입력과 다르면 y >= p 인 비정규 표현
+        if y.to_bytes() != y_bytes {
+            return None;
+        }
+
         let y2 = y.square();
         let d = d_constant();
 
@@ -162,22 +169,30 @@ impl EdwardsPoint {
         }
     }
 
+    // 상수시간 조건부 점 선택 choice 가 1 이면 b 0 이면 a
+    #[inline]
+    fn conditional_select(a: &Self, b: &Self, choice: u8) -> Self {
+        EdwardsPoint {
+            x: FieldElement::conditional_select(&a.x, &b.x, choice),
+            y: FieldElement::conditional_select(&a.y, &b.y, choice),
+            z: FieldElement::conditional_select(&a.z, &b.z, choice),
+            t: FieldElement::conditional_select(&a.t, &b.t, choice),
+        }
+    }
+
     pub fn scalar_mul(&self, scalar: &Scalar) -> Self {
         // 스칼라 바이트는 비밀일 수 있으므로 사용 후 명시적 소거
         let mut s = scalar.to_bytes();
         let mut result = EdwardsPoint::identity();
 
+        // 비밀 스칼라 비트에 분기하지 않는 상수시간 double-and-add
+        // 매 비트마다 덧셈을 항상 수행하고 조건부 선택으로 누적값 갱신
         for i in (0..448).rev() {
             result = result.double_internal();
-
-            let byte_idx = i / 8;
-            let bit_idx = i % 8;
-            if byte_idx < 57 {
-                let bit = (s[byte_idx] >> bit_idx) & 1;
-                if bit == 1 {
-                    result = result.add_internal(self);
-                }
-            }
+            let bit = (s[i / 8] >> (i % 8)) & 1;
+            let mut sum = result.add_internal(self);
+            result = EdwardsPoint::conditional_select(&result, &sum, bit);
+            sum.zeroize();
         }
 
         // 스칼라 사본 명시적 소거

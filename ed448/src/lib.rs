@@ -172,6 +172,11 @@ impl Signature {
 }
 
 fn dom4(context: &[u8]) -> ([u8; 10], usize) {
+    // RFC 8032: 컨텍스트는 최대 255 옥텟 OLEN 이 1 바이트라 초과 시 절단되어 적합성 위반
+    assert!(
+        context.len() <= 255,
+        "Ed448 컨텍스트는 255 바이트 이하여야 함"
+    );
     let mut dom = [0u8; 10];
     dom[..8].copy_from_slice(DOM4_PREFIX);
     dom[8] = 0;
