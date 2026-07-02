@@ -12,7 +12,7 @@
 - [ ] ChaCha20
 - [X] Ed448
 - [X] Ed25519
-- [ ] X448
+- [X] X448
 - [X] X25519
 - [X] ML-DSA
 - [ ] ML-KEM

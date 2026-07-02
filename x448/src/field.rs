@@ -1,17 +1,27 @@
 #![allow(
     clippy::unusual_byte_groupings,
     clippy::wrong_self_convention,
-    clippy::needless_range_loop,
-    dead_code
+    clippy::needless_range_loop
 )]
 
 use constant_time::{Choice, CtSelOps};
-use core::ops::{Add, Mul, Neg, Sub};
+use core::ops::{Add, Mul, Sub};
 use zeroize::Zeroize;
 
 const LIMBS: usize = 8;
 const LIMB_BITS: usize = 56;
 const MASK: u64 = (1u64 << 56) - 1;
+
+const P: [u64; LIMBS] = [
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFE,
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFF,
+];
 
 #[derive(Clone, Copy)]
 pub struct FieldElement(pub(crate) [u64; LIMBS]);
@@ -102,17 +112,6 @@ impl FieldElement {
     }
 
     fn reduce(&self) -> Self {
-        let p: [u64; LIMBS] = [
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFE,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-        ];
-
         let mut t = self.weak_reduce();
         t = t.weak_reduce();
         t = t.weak_reduce();
@@ -120,14 +119,14 @@ impl FieldElement {
         for _ in 0..3 {
             let mut under = 0i64;
             for i in 0..LIMBS {
-                let diff = (t.0[i] as i64) - (p[i] as i64) + under;
+                let diff = (t.0[i] as i64) - (P[i] as i64) + under;
                 under = diff >> 63;
             }
 
             if under >= 0 {
                 let mut borrow = 0i64;
                 for i in 0..LIMBS {
-                    let diff = (t.0[i] as i64) - (p[i] as i64) - borrow;
+                    let diff = (t.0[i] as i64) - (P[i] as i64) - borrow;
                     borrow = if diff < 0 { 1 } else { 0 };
                     t.0[i] = (diff as u64) & MASK;
                 }
@@ -176,6 +175,9 @@ impl FieldElement {
 
         let mut fe = FieldElement(result);
         fe = fe.weak_reduce();
+        c.zeroize();
+        carry.zeroize();
+        result.zeroize();
         fe
     }
 
@@ -195,16 +197,8 @@ impl FieldElement {
             base = base.square();
         }
 
+        base.zeroize();
         result
-    }
-
-    pub fn is_zero(&self) -> Choice {
-        let t = self.reduce();
-        let mut or = 0u64;
-        for i in 0..LIMBS {
-            or |= t.0[i];
-        }
-        Choice::from_u8((or == 0) as u8)
     }
 
     #[inline]
@@ -233,52 +227,13 @@ impl Sub for FieldElement {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        let p: [u64; LIMBS] = [
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFE,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFF,
-        ];
-
-        let a = self.reduce();
-        let b = rhs.reduce();
+        // 2*p 바이어스를 더해 분기 없이 언더플로 방지 (상수시간)
+        // 약하게 축소된 limb 은 2*P[i] 미만이므로 limb 단위 음수 발생 안 함
         let mut result = [0u64; LIMBS];
-        let mut borrow = 0i64;
-
         for i in 0..LIMBS {
-            let diff = (a.0[i] as i64) - (b.0[i] as i64) - borrow;
-            if diff < 0 {
-                result[i] = ((diff + (MASK as i64) + 1) as u64) & MASK;
-                borrow = 1;
-            } else {
-                result[i] = (diff as u64) & MASK;
-                borrow = 0;
-            }
+            result[i] = (self.0[i] + 2 * P[i]) - rhs.0[i];
         }
-
-        if borrow != 0 {
-            let mut carry = 0i64;
-            for i in 0..LIMBS {
-                let sum = (result[i] as i64) + (p[i] as i64) + carry;
-                result[i] = (sum as u64) & MASK;
-                carry = sum >> LIMB_BITS;
-            }
-        }
-
-        FieldElement(result)
-    }
-}
-
-impl Neg for FieldElement {
-    type Output = Self;
-
-    #[inline]
-    fn neg(self) -> Self {
-        FieldElement::zero() - self
+        FieldElement(result).weak_reduce()
     }
 }
 
@@ -295,11 +250,11 @@ impl PartialEq for FieldElement {
     fn eq(&self, other: &Self) -> bool {
         let a = self.reduce();
         let b = other.reduce();
-        let mut eq = true;
+        let mut acc = 0u64;
         for i in 0..LIMBS {
-            eq = eq && (a.0[i] == b.0[i]);
+            acc |= a.0[i] ^ b.0[i];
         }
-        eq
+        acc == 0
     }
 }
 

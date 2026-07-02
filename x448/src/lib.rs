@@ -22,8 +22,8 @@
 //! let bob_public = bob_secret.public_key();
 //!
 //! // 공유 비밀 계산
-//! let alice_shared = alice_secret.diffie_hellman(&bob_public);
-//! let bob_shared = bob_secret.diffie_hellman(&alice_public);
+//! let alice_shared = alice_secret.diffie_hellman(&bob_public).unwrap();
+//! let bob_shared = bob_secret.diffie_hellman(&alice_public).unwrap();
 //!
 //! assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 //! ```
@@ -44,6 +44,11 @@ const BASEPOINT_U: [u8; 56] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum X448Error {
+    LowOrderPoint,
+}
+
 pub struct SecretKey(Secret<[u8; 56]>);
 
 impl SecretKey {
@@ -60,11 +65,15 @@ impl SecretKey {
         PublicKey(public_bytes)
     }
 
-    pub fn diffie_hellman(&self, their_public: &PublicKey) -> SharedSecret {
+    pub fn diffie_hellman(&self, their_public: &PublicKey) -> Result<SharedSecret, X448Error> {
         let mut shared = x448(self.0.expose(), &their_public.0);
         let result = SharedSecret(Secret::new(shared));
         shared.zeroize();
-        result
+        if result.is_zero() {
+            Err(X448Error::LowOrderPoint)
+        } else {
+            Ok(result)
+        }
     }
 }
 
@@ -123,6 +132,19 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
 
     let mut swap: u8 = 0;
 
+    let mut a = FieldElement::zero();
+    let mut aa = FieldElement::zero();
+    let mut b = FieldElement::zero();
+    let mut bb = FieldElement::zero();
+    let mut e = FieldElement::zero();
+    let mut c = FieldElement::zero();
+    let mut d = FieldElement::zero();
+    let mut da = FieldElement::zero();
+    let mut cb = FieldElement::zero();
+    let mut sum = FieldElement::zero();
+    let mut diff = FieldElement::zero();
+    let mut a24_e = FieldElement::zero();
+
     for pos in (0..448).rev() {
         let byte_idx = pos / 8;
         let bit_idx = pos % 8;
@@ -134,21 +156,21 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
         FieldElement::conditional_swap(&mut z_2, &mut z_3, choice);
         swap = k_t;
 
-        let a = x_2 + z_2;
-        let aa = a.square();
-        let b = x_2 - z_2;
-        let bb = b.square();
-        let e = aa - bb;
-        let c = x_3 + z_3;
-        let d = x_3 - z_3;
-        let da = d * a;
-        let cb = c * b;
-        let sum = da + cb;
-        let diff = da - cb;
+        a = x_2 + z_2;
+        aa = a.square();
+        b = x_2 - z_2;
+        bb = b.square();
+        e = aa - bb;
+        c = x_3 + z_3;
+        d = x_3 - z_3;
+        da = d * a;
+        cb = c * b;
+        sum = da + cb;
+        diff = da - cb;
         x_3 = sum.square();
         z_3 = x_1 * diff.square();
         x_2 = aa * bb;
-        let a24_e = mul_by_a24(e);
+        a24_e = mul_by_a24(e);
         z_2 = e * (aa + a24_e);
     }
 
@@ -170,6 +192,18 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
     z_2_inv.zeroize();
     result.zeroize();
     swap.zeroize();
+    a.zeroize();
+    aa.zeroize();
+    b.zeroize();
+    bb.zeroize();
+    e.zeroize();
+    c.zeroize();
+    d.zeroize();
+    da.zeroize();
+    cb.zeroize();
+    sum.zeroize();
+    diff.zeroize();
+    a24_e.zeroize();
 
     bytes
 }
@@ -219,7 +253,7 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
     c[0] += carry;
     c[4] += carry;
 
-    FieldElement([
+    let out = FieldElement([
         c[0] as u64,
         c[1] as u64,
         c[2] as u64,
@@ -228,7 +262,9 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
         c[5] as u64,
         c[6] as u64,
         c[7] as u64,
-    ])
+    ]);
+    c.zeroize();
+    out
 }
 
 pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R) -> (SecretKey, PublicKey) {
@@ -287,7 +323,7 @@ mod tests {
         let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(alice_secret.diffie_hellman(&bob_pk));
+            storage.write(alice_secret.diffie_hellman(&bob_pk).unwrap());
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 56);
@@ -431,8 +467,8 @@ mod tests {
         let alice_pk = alice_sk.public_key();
         let bob_pk = bob_sk.public_key();
 
-        let alice_shared = alice_sk.diffie_hellman(&bob_pk);
-        let bob_shared = bob_sk.diffie_hellman(&alice_pk);
+        let alice_shared = alice_sk.diffie_hellman(&bob_pk).unwrap();
+        let bob_shared = bob_sk.diffie_hellman(&alice_pk).unwrap();
 
         assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 
@@ -488,21 +524,48 @@ mod tests {
     #[test]
     fn test_low_order_point_rejection() {
         let secret = SecretKey::from_bytes([1u8; 56]);
-        let low_order_points: [[u8; 56]; 2] = [
-            [0u8; 56],
-            [
-                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-        ];
+
+        let mut u_one = [0u8; 56];
+        u_one[0] = 1;
+
+        // 비정규 인코딩 p 는 u = 0, p+1 은 u = 1 에 해당
+        let mut p_bytes = [0xFFu8; 56];
+        p_bytes[28] = 0xFE;
+        let mut p_plus_one = [0u8; 56];
+        for byte in p_plus_one.iter_mut().skip(28) {
+            *byte = 0xFF;
+        }
+
+        let low_order_points: [[u8; 56]; 4] = [[0u8; 56], u_one, p_bytes, p_plus_one];
 
         for low_order in &low_order_points {
             let public = PublicKey::from_bytes(*low_order);
-            let shared = secret.diffie_hellman(&public);
+            let result = secret.diffie_hellman(&public);
             assert!(
-                shared.is_zero(),
-                "low-order point should produce zero shared secret"
+                matches!(result, Err(X448Error::LowOrderPoint)),
+                "low-order point should be rejected"
             );
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_iteration_1000000() {
+        let mut k = BASEPOINT_U;
+        let mut u = BASEPOINT_U;
+
+        for _ in 0..1_000_000 {
+            let result = x448(&k, &u);
+            u = k;
+            k = result;
+        }
+
+        let expected: [u8; 56] = [
+            0x07, 0x7f, 0x45, 0x36, 0x81, 0xca, 0xca, 0x36, 0x93, 0x19, 0x84, 0x20, 0xbb, 0xe5,
+            0x15, 0xca, 0xe0, 0x00, 0x24, 0x72, 0x51, 0x9b, 0x3e, 0x67, 0x66, 0x1a, 0x7e, 0x89,
+            0xca, 0xb9, 0x46, 0x95, 0xc8, 0xf4, 0xbc, 0xd6, 0x6e, 0x61, 0xb9, 0xb9, 0xc9, 0x46,
+            0xda, 0x8d, 0x52, 0x4d, 0xe3, 0xd6, 0x9b, 0xd9, 0xd9, 0xd6, 0x6b, 0x99, 0x7e, 0x37,
+        ];
+        assert_eq!(k, expected);
     }
 }
