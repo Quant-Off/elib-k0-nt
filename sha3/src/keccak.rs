@@ -249,4 +249,20 @@ impl KeccakState {
         self.squeeze_into(out);
         // self 드롭 시 KeccakState 의 Secret 필드가 자동 소거
     }
+
+    pub(crate) fn into_xof_reader(mut self) -> Self {
+        self.pad();
+        self
+    }
+
+    pub(crate) fn squeeze_block(&mut self, out: &mut [u8]) {
+        let rate_words = self.rate_bytes / 8;
+        let mut word_bytes = [0u8; 8];
+        for word_idx in 0..rate_words {
+            word_bytes = self.state[word_idx].to_le_bytes();
+            out[word_idx * 8..word_idx * 8 + 8].copy_from_slice(&word_bytes);
+        }
+        word_bytes.zeroize();
+        Self::keccak_f1600(&mut self.state);
+    }
 }

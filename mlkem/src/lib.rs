@@ -22,7 +22,7 @@
 //!
 //! // 2. 캡슐화 (송신자: 공유 비밀 + 암호문 생성)
 //! let m = [0u8; 32]; // CSPRNG로 생성 필요
-//! let (ciphertext, shared_secret_enc) = mlkem768_encaps(&keypair.ek, &m);
+//! let (ciphertext, shared_secret_enc) = mlkem768_encaps(&keypair.ek, &m).unwrap();
 //!
 //! // 3. 역캡슐화 (수신자: 공유 비밀 복원)
 //! let shared_secret_dec = mlkem768_decaps(&ciphertext, keypair.dk.expose());
@@ -72,6 +72,17 @@ pub(crate) const MLKEM1024_EK_BYTES: usize = ek_bytes(4);
 pub(crate) const MLKEM1024_DK_BYTES: usize = dk_bytes(4);
 /// ML-KEM-1024 암호문 바이트 크기 (1568 bytes)
 pub(crate) const MLKEM1024_CT_BYTES: usize = ct_bytes(4, 11, 5);
+
+/// ML-KEM 캡슐화 오류
+///
+/// # Security Note
+/// `InvalidEncapsulationKey`는 FIPS 203 7.2 모듈러스 검사 실패를 나타내며
+/// 비정규 캡슐화 키를 거부합니다. 공개 키 검증이므로 상수 시간 요구 사항은 없습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// 캡슐화 키 계수가 비정규(q 이상)
+    InvalidEncapsulationKey,
+}
 
 /// ML-KEM-512 키 쌍 구조체
 ///
@@ -132,10 +143,13 @@ pub fn mlkem512_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM512KeyPair {
 ///
 /// # Returns
 /// - 암호문과 공유 비밀 키의 튜플
+///
+/// # Errors
+/// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem512_encaps(
     ek: &[u8; MLKEM512_EK_BYTES],
     m: &[u8; 32],
-) -> ([u8; MLKEM512_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>) {
+) -> Result<([u8; MLKEM512_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
     let mut ct = [0u8; MLKEM512_CT_BYTES];
     let mut ss = [0u8; SHAREDSECRETBYTES];
     kem::encaps::<2>(
@@ -147,8 +161,8 @@ pub fn mlkem512_encaps(
         MLKEM512.eta2,
         MLKEM512.du,
         MLKEM512.dv,
-    );
-    (ct, Secret::new(ss))
+    )?;
+    Ok((ct, Secret::new(ss)))
 }
 
 /// ML-KEM-512 역캡슐화를 수행합니다.
@@ -205,10 +219,13 @@ pub fn mlkem768_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM768KeyPair {
 ///
 /// # Returns
 /// - 암호문과 공유 비밀 키의 튜플
+///
+/// # Errors
+/// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem768_encaps(
     ek: &[u8; MLKEM768_EK_BYTES],
     m: &[u8; 32],
-) -> ([u8; MLKEM768_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>) {
+) -> Result<([u8; MLKEM768_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
     let mut ct = [0u8; MLKEM768_CT_BYTES];
     let mut ss = [0u8; SHAREDSECRETBYTES];
     kem::encaps::<3>(
@@ -220,8 +237,8 @@ pub fn mlkem768_encaps(
         MLKEM768.eta2,
         MLKEM768.du,
         MLKEM768.dv,
-    );
-    (ct, Secret::new(ss))
+    )?;
+    Ok((ct, Secret::new(ss)))
 }
 
 /// ML-KEM-768 역캡슐화를 수행합니다.
@@ -278,10 +295,13 @@ pub fn mlkem1024_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM1024KeyPair {
 ///
 /// # Returns
 /// - 암호문과 공유 비밀 키의 튜플
+///
+/// # Errors
+/// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem1024_encaps(
     ek: &[u8; MLKEM1024_EK_BYTES],
     m: &[u8; 32],
-) -> ([u8; MLKEM1024_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>) {
+) -> Result<([u8; MLKEM1024_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
     let mut ct = [0u8; MLKEM1024_CT_BYTES];
     let mut ss = [0u8; SHAREDSECRETBYTES];
     kem::encaps::<4>(
@@ -293,8 +313,8 @@ pub fn mlkem1024_encaps(
         MLKEM1024.eta2,
         MLKEM1024.du,
         MLKEM1024.dv,
-    );
-    (ct, Secret::new(ss))
+    )?;
+    Ok((ct, Secret::new(ss)))
 }
 
 /// ML-KEM-1024 역캡슐화를 수행합니다.
@@ -565,7 +585,7 @@ mod tests {
         let m = [3u8; 32];
 
         let keypair = mlkem512_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem512_encaps(&keypair.ek, &m);
+        let (ct, ss_enc) = mlkem512_encaps(&keypair.ek, &m).unwrap();
         let ss_dec = mlkem512_decaps(&ct, keypair.dk.expose());
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());
@@ -578,7 +598,7 @@ mod tests {
         let m = [6u8; 32];
 
         let keypair = mlkem768_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem768_encaps(&keypair.ek, &m);
+        let (ct, ss_enc) = mlkem768_encaps(&keypair.ek, &m).unwrap();
         let ss_dec = mlkem768_decaps(&ct, keypair.dk.expose());
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());
@@ -591,7 +611,7 @@ mod tests {
         let m = [9u8; 32];
 
         let keypair = mlkem1024_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem1024_encaps(&keypair.ek, &m);
+        let (ct, ss_enc) = mlkem1024_encaps(&keypair.ek, &m).unwrap();
         let ss_dec = mlkem1024_decaps(&ct, keypair.dk.expose());
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());

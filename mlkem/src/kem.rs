@@ -1,12 +1,25 @@
 #![allow(clippy::too_many_arguments)]
 
+use crate::Error;
 use crate::kpke;
-use crate::params::{N, SHAREDSECRETBYTES, SYMBYTES};
+use crate::params::{N, Q, SHAREDSECRETBYTES, SYMBYTES};
 use constant_time::{Choice, CtEqOps, CtSelOps};
 use sha3::{SHA3, SHA3_256, SHA3_512, SHAKE256, XOF};
 use zeroize::Zeroize;
 
 const POLYBYTES: usize = N * 3 / 2;
+
+fn ek_modulus_valid<const K: usize>(ek: &[u8]) -> bool {
+    let polyvec_bytes = K * POLYBYTES;
+    for chunk in ek[..polyvec_bytes].chunks_exact(3) {
+        let c0 = (chunk[0] as u16) | (((chunk[1] & 0x0F) as u16) << 8);
+        let c1 = ((chunk[1] >> 4) as u16) | ((chunk[2] as u16) << 4);
+        if c0 >= Q || c1 >= Q {
+            return false;
+        }
+    }
+    true
+}
 
 fn hash_h(input: &[u8]) -> [u8; 32] {
     let mut hasher = SHA3_256::new();
@@ -64,10 +77,13 @@ pub fn encaps<const K: usize>(
     eta2: usize,
     du: usize,
     dv: usize,
-) {
+) -> Result<(), Error> {
     let polyvec_bytes = K * POLYBYTES;
     let ek_len = polyvec_bytes + SYMBYTES;
-    let ct_len = K * N * du / 8 + N * dv / 8;
+
+    if !ek_modulus_valid::<K>(ek) {
+        return Err(Error::InvalidEncapsulationKey);
+    }
 
     let h_ek = hash_h(&ek[..ek_len]);
 
@@ -75,15 +91,20 @@ pub fn encaps<const K: usize>(
     g_input[..32].copy_from_slice(m);
     g_input[32..64].copy_from_slice(&h_ek);
 
-    let g_out = hash_g(&g_input);
-    let k_bar: [u8; 32] = g_out[..32].try_into().unwrap();
-    let r: [u8; 32] = g_out[32..64].try_into().unwrap();
+    let mut g_out = hash_g(&g_input);
+    let mut k_bar: [u8; 32] = g_out[..32].try_into().unwrap();
+    let mut r: [u8; 32] = g_out[32..64].try_into().unwrap();
 
     kpke::encrypt::<K>(ct, &ek[..ek_len], m, &r, eta1, eta2, du, dv);
 
-    *ss = kdf(&ct[..ct_len], &k_bar);
+    ss.copy_from_slice(&k_bar);
 
     g_input.zeroize();
+    g_out.zeroize();
+    k_bar.zeroize();
+    r.zeroize();
+
+    Ok(())
 }
 
 pub fn decaps<const K: usize>(
@@ -104,7 +125,7 @@ pub fn decaps<const K: usize>(
     let h_ek: [u8; 32] = dk[polyvec_bytes + ek_len..polyvec_bytes + ek_len + SYMBYTES]
         .try_into()
         .unwrap();
-    let z: [u8; 32] = dk[polyvec_bytes + ek_len + SYMBYTES..polyvec_bytes + ek_len + 2 * SYMBYTES]
+    let mut z: [u8; 32] = dk[polyvec_bytes + ek_len + SYMBYTES..polyvec_bytes + ek_len + 2 * SYMBYTES]
         .try_into()
         .unwrap();
 
@@ -115,9 +136,9 @@ pub fn decaps<const K: usize>(
     g_input[..32].copy_from_slice(&m_prime);
     g_input[32..64].copy_from_slice(&h_ek);
 
-    let g_out = hash_g(&g_input);
-    let k_bar: [u8; 32] = g_out[..32].try_into().unwrap();
-    let r: [u8; 32] = g_out[32..64].try_into().unwrap();
+    let mut g_out = hash_g(&g_input);
+    let mut k_bar: [u8; 32] = g_out[..32].try_into().unwrap();
+    let mut r: [u8; 32] = g_out[32..64].try_into().unwrap();
 
     let mut ct_prime = [0u8; 1568];
     kpke::encrypt::<K>(
@@ -136,14 +157,18 @@ pub fn decaps<const K: usize>(
         eq &= CtEqOps::eq(&ct[i], &ct_prime[i]);
     }
 
-    let k_bar_result = kdf(&ct[..ct_len], &k_bar);
-    let z_result = kdf(&ct[..ct_len], &z);
+    let mut z_result = kdf(&ct[..ct_len], &z);
 
     for i in 0..SHAREDSECRETBYTES {
-        ss[i] = u8::select(&z_result[i], &k_bar_result[i], eq);
+        ss[i] = u8::select(&z_result[i], &k_bar[i], eq);
     }
 
     m_prime.zeroize();
     g_input.zeroize();
+    g_out.zeroize();
+    k_bar.zeroize();
+    r.zeroize();
+    z.zeroize();
+    z_result.zeroize();
     ct_prime.zeroize();
 }
