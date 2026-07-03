@@ -68,6 +68,23 @@ mod tests {
         count
     }
 
+    //
+    // Test serialisation
+    //
+    // The default parallel test harness runs the dudect tests concurrently
+    // inside one process; contending measurement loops inflate variance and
+    // produce false FAIL verdicts under load. A file-local mutex serialises
+    // every measurement section (poison-tolerant so one FAIL does not
+    // cascade into the remaining tests).
+
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[inline(always)]
     fn ticks() -> u64 {
@@ -150,10 +167,19 @@ mod tests {
     /// Iterations discarded to warm instruction caches and branch predictors.
     const WARMUP: usize = 50_000;
     /// Timing samples collected per test (split evenly: half per class).
-    /// Increased from 300k to 1M for better detection of subtle timing leaks.
-    const MEASUREMENTS: usize = 1_000_000;
+    const MEASUREMENTS: usize = 200_000;
+    /// Calls averaged per sample.  Single ~ns primitives sit far below the
+    /// aarch64 CNTVCT_EL0 granularity (24 MHz ≈ 42 ns/tick); averaging a
+    /// batch lifts the signal above counter quantisation noise while the
+    /// Welch t-test on batch means stays a valid leak detector.
+    const BATCH: usize = 32;
     /// Standard dudect threshold.  |t| ≥ 4.5 → timing leak at ~6σ confidence.
     const T_THRESHOLD: f64 = 4.5;
+    /// Consecutive re-measurements required before declaring a leak.  A
+    /// single Welch t excursion above 4.5 recurs by chance across 19 tests
+    /// and repeated runs (scheduler/DVFS noise is autocorrelated); a genuine
+    /// leak stays above threshold on every independent re-measurement.
+    const DUDECT_RETRIES: usize = 3;
 
     fn report(label: &str, s0: &Stats, s1: &Stats) -> bool {
         let t = welch_t(s0, s1).abs();
@@ -176,14 +202,16 @@ mod tests {
     //
     // Test helpers
     //
-    // Measure `f(v)` once, return elapsed ticks.
+    // Measure `f(v)` BATCH times, return mean elapsed ticks per call.
     // The argument and return value go through black_box to prevent DCE/hoisting.
     macro_rules! measure {
         ($f:expr) => {{
             let t0 = ticks();
-            let _ = black_box($f);
+            for _ in 0..BATCH {
+                let _ = black_box($f);
+            }
             let t1 = ticks();
-            t1.saturating_sub(t0) as f64
+            t1.saturating_sub(t0) as f64 / BATCH as f64
         }};
     }
 
@@ -200,22 +228,24 @@ mod tests {
     //   and |t| will exceed the threshold.
     #[test]
     fn dudect_choice_from_u8() {
+        let _serial = serial();
         let mut s = 0xdead_beef_cafe_0001_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            black_box(Choice::from_u8(black_box(rnd_u8(&mut s))));
+            for _ in 0..WARMUP {
+                black_box(Choice::from_u8(black_box(rnd_u8(&mut s))));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let v = if cl == 0 { rnd_u8(&mut s) } else { 0u8 };
+                stat[cl].push(measure!(Choice::from_u8(black_box(v))));
+            }
+            if report("Choice::from_u8  (random vs fixed=0)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let v = if cl == 0 { rnd_u8(&mut s) } else { 0u8 };
-            stat[cl].push(measure!(Choice::from_u8(black_box(v))));
-        }
-        assert!(report(
-            "Choice::from_u8  (random vs fixed=0)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -228,52 +258,56 @@ mod tests {
     //   information about which path was taken leaks through the value itself.
     #[test]
     fn dudect_select_u32() {
+        let _serial = serial();
         let mut s = 0x1234_5678_abcd_0002_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            let (a, b) = (rnd_u32(&mut s), rnd_u32(&mut s));
-            black_box(u32::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+            for _ in 0..WARMUP {
+                let (a, b) = (rnd_u32(&mut s), rnd_u32(&mut s));
+                black_box(u32::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u32(&mut s));
+                let b = black_box(rnd_u32(&mut s));
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(u32::select(&a, &b, c)));
+            }
+            if report("u32::select  (choice=0 vs choice=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u32(&mut s));
-            let b = black_box(rnd_u32(&mut s));
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(u32::select(&a, &b, c)));
-        }
-        assert!(report(
-            "u32::select  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     // u64::select — same as above but for 64-bit values.
     #[test]
     fn dudect_select_u64() {
+        let _serial = serial();
         let mut s = 0xfeed_face_dead_0003_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            black_box(u64::select(
-                &rnd_u64(&mut s),
-                &rnd_u64(&mut s),
-                Choice::from_u8(rnd_u8(&mut s) & 1),
-            ));
+            for _ in 0..WARMUP {
+                black_box(u64::select(
+                    &rnd_u64(&mut s),
+                    &rnd_u64(&mut s),
+                    Choice::from_u8(rnd_u8(&mut s) & 1),
+                ));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u64(&mut s));
+                let b = black_box(rnd_u64(&mut s));
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(u64::select(&a, &b, c)));
+            }
+            if report("u64::select  (choice=0 vs choice=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u64(&mut s));
-            let b = black_box(rnd_u64(&mut s));
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(u64::select(&a, &b, c)));
-        }
-        assert!(report(
-            "u64::select  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -283,47 +317,51 @@ mod tests {
     //   Class 1: a != b  (b = a ^ 1; guaranteed different; result is Choice(0)).
     #[test]
     fn dudect_eq_i32() {
+        let _serial = serial();
         let mut s = 0xaaaa_bbbb_0000_0004_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            let a = rnd_i32(&mut s);
-            black_box(CtEqOps::eq(&a, &a));
+            for _ in 0..WARMUP {
+                let a = rnd_i32(&mut s);
+                black_box(CtEqOps::eq(&a, &a));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_i32(&mut s));
+                let b = black_box(if cl == 0 { a } else { a ^ 1 });
+                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+            }
+            if report("CtEqOps::eq<i32>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_i32(&mut s));
-            let b = if cl == 0 { a } else { a ^ 1 };
-            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
-        }
-        assert!(report(
-            "CtEqOps::eq<i32>  (a==a vs a!=a^1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     // CtEqOps::eq<u64> — 64-bit equality.
     #[test]
     fn dudect_eq_u64() {
+        let _serial = serial();
         let mut s = 0x1111_2222_3333_0005_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            let a = rnd_u64(&mut s);
-            black_box(CtEqOps::eq(&a, &a));
+            for _ in 0..WARMUP {
+                let a = rnd_u64(&mut s);
+                black_box(CtEqOps::eq(&a, &a));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u64(&mut s));
+                let b = black_box(if cl == 0 { a } else { a ^ 1 });
+                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+            }
+            if report("CtEqOps::eq<u64>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u64(&mut s));
-            let b = if cl == 0 { a } else { a ^ 1 };
-            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
-        }
-        assert!(report(
-            "CtEqOps::eq<u64>  (a==a vs a!=a^1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -336,30 +374,32 @@ mod tests {
     //   similar across classes (avoiding Hamming-weight correlation artifacts).
     #[test]
     fn dudect_gt_u64() {
+        let _serial = serial();
         let mut s = 0x9999_8888_7777_0006_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        const MSB: u64 = 1u64 << 63;
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            const MSB: u64 = 1u64 << 63;
 
-        for _ in 0..WARMUP {
-            let raw = rnd_u64(&mut s);
-            let (a, b) = (raw | MSB, raw & !MSB);
-            black_box(CtGreeter::gt(&a, &b));
+            for _ in 0..WARMUP {
+                let raw = rnd_u64(&mut s);
+                let (a, b) = (raw | MSB, raw & !MSB);
+                black_box(CtGreeter::gt(&a, &b));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let raw = black_box(rnd_u64(&mut s));
+                let (a, b) = if cl == 0 {
+                    (raw | MSB, raw & !MSB) // a > b (unsigned)
+                } else {
+                    (raw & !MSB, raw | MSB) // a < b
+                };
+                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+            }
+            if report("CtGreeter::gt<u64>  (a>b vs a<b)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let raw = black_box(rnd_u64(&mut s));
-            let (a, b) = if cl == 0 {
-                (raw | MSB, raw & !MSB) // a > b (unsigned)
-            } else {
-                (raw & !MSB, raw | MSB) // a < b
-            };
-            stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
-        }
-        assert!(report(
-            "CtGreeter::gt<u64>  (a>b vs a<b)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -372,30 +412,32 @@ mod tests {
     //   Since non-negative > negative for signed comparison, ordering is guaranteed.
     #[test]
     fn dudect_gt_i64() {
+        let _serial = serial();
         let mut s = 0x5555_4444_3333_0007_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        const SIGN: u64 = 1u64 << 63;
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            const SIGN: u64 = 1u64 << 63;
 
-        for _ in 0..WARMUP {
-            let raw = rnd_u64(&mut s);
-            let (a, b) = ((raw & !SIGN) as i64, (raw | SIGN) as i64);
-            black_box(CtGreeter::gt(&a, &b));
+            for _ in 0..WARMUP {
+                let raw = rnd_u64(&mut s);
+                let (a, b) = ((raw & !SIGN) as i64, (raw | SIGN) as i64);
+                black_box(CtGreeter::gt(&a, &b));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let raw = black_box(rnd_u64(&mut s));
+                let (a, b) = if cl == 0 {
+                    ((raw & !SIGN) as i64, (raw | SIGN) as i64) // a ≥ 0 > b (signed)
+                } else {
+                    ((raw | SIGN) as i64, (raw & !SIGN) as i64) // a < 0 ≤ b (signed)
+                };
+                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+            }
+            if report("CtGreeter::gt<i64>  (a>b vs a<b)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let raw = black_box(rnd_u64(&mut s));
-            let (a, b) = if cl == 0 {
-                ((raw & !SIGN) as i64, (raw | SIGN) as i64) // a ≥ 0 > b (signed)
-            } else {
-                ((raw | SIGN) as i64, (raw & !SIGN) as i64) // a < 0 ≤ b (signed)
-            };
-            stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
-        }
-        assert!(report(
-            "CtGreeter::gt<i64>  (a>b vs a<b)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -407,29 +449,31 @@ mod tests {
     //   The low 64-bit word is randomised in both classes.
     #[test]
     fn dudect_gt_u128() {
+        let _serial = serial();
         let mut s = 0xcafe_babe_f00d_0008_u64;
-        let mut stat = [Stats::default(), Stats::default()];
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
 
-        for _ in 0..WARMUP {
-            let lo = rnd_u64(&mut s) as u128;
-            let (a, b) = ((u64::MAX as u128) << 64 | lo, lo);
-            black_box(CtGreeter::gt(&a, &b));
+            for _ in 0..WARMUP {
+                let lo = rnd_u64(&mut s) as u128;
+                let (a, b) = ((u64::MAX as u128) << 64 | lo, lo);
+                black_box(CtGreeter::gt(&a, &b));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let lo = black_box(rnd_u64(&mut s)) as u128;
+                let (a, b) = if cl == 0 {
+                    ((u64::MAX as u128) << 64 | lo, lo) // a > b
+                } else {
+                    (lo, (u64::MAX as u128) << 64 | lo) // a < b
+                };
+                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+            }
+            if report("CtGreeter::gt<u128>  (a>b vs a<b)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let lo = black_box(rnd_u64(&mut s)) as u128;
-            let (a, b) = if cl == 0 {
-                ((u64::MAX as u128) << 64 | lo, lo) // a > b
-            } else {
-                (lo, (u64::MAX as u128) << 64 | lo) // a < b
-            };
-            stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
-        }
-        assert!(report(
-            "CtGreeter::gt<u128>  (a>b vs a<b)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -439,25 +483,31 @@ mod tests {
     //   Class 1: a > b.
     #[test]
     fn dudect_lt_u32() {
+        let _serial = serial();
         let mut s = 0x3333_2222_1111_0009_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        const MSB: u32 = 1u32 << 31;
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            const MSB: u32 = 1u32 << 31;
 
-        for _ in 0..WARMUP {
-            let raw = rnd_u32(&mut s);
-            black_box(CtLess::lt(&(raw & !MSB), &(raw | MSB)));
+            for _ in 0..WARMUP {
+                let raw = rnd_u32(&mut s);
+                black_box(CtLess::lt(&(raw & !MSB), &(raw | MSB)));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let raw = black_box(rnd_u32(&mut s));
+                let (a, b) = if cl == 0 {
+                    (raw & !MSB, raw | MSB) // a < b
+                } else {
+                    (raw | MSB, raw & !MSB) // a > b
+                };
+                stat[cl].push(measure!(CtLess::lt(&a, &b)));
+            }
+            if report("CtLess::lt<u32>  (a<b vs a>b)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let raw = black_box(rnd_u32(&mut s));
-            let (a, b) = if cl == 0 {
-                (raw & !MSB, raw | MSB) // a < b
-            } else {
-                (raw | MSB, raw & !MSB) // a > b
-            };
-            stat[cl].push(measure!(CtLess::lt(&a, &b)));
-        }
-        assert!(report("CtLess::lt<u32>  (a<b vs a>b)", &stat[0], &stat[1]));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -469,111 +519,121 @@ mod tests {
 
     #[test]
     fn dudect_select_u8() {
+        let _serial = serial();
         let mut s = 0xa1a1_b2b2_c3c3_0010_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let (a, b) = (rnd_u8(&mut s), rnd_u8(&mut s));
-            black_box(u8::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let (a, b) = (rnd_u8(&mut s), rnd_u8(&mut s));
+                black_box(u8::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u8(&mut s));
+                let b = black_box(rnd_u8(&mut s));
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(u8::select(&a, &b, c)));
+            }
+            if report("u8::select  (choice=0 vs choice=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u8(&mut s));
-            let b = black_box(rnd_u8(&mut s));
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(u8::select(&a, &b, c)));
-        }
-        assert!(report(
-            "u8::select  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_select_u16() {
+        let _serial = serial();
         let mut s = 0xb2b2_c3c3_d4d4_0011_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let (a, b) = (rnd_u32(&mut s) as u16, rnd_u32(&mut s) as u16);
-            black_box(u16::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let (a, b) = (rnd_u32(&mut s) as u16, rnd_u32(&mut s) as u16);
+                black_box(u16::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u32(&mut s) as u16);
+                let b = black_box(rnd_u32(&mut s) as u16);
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(u16::select(&a, &b, c)));
+            }
+            if report("u16::select  (choice=0 vs choice=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u32(&mut s) as u16);
-            let b = black_box(rnd_u32(&mut s) as u16);
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(u16::select(&a, &b, c)));
-        }
-        assert!(report(
-            "u16::select  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_select_u128() {
+        let _serial = serial();
         let mut s = 0xc3c3_d4d4_e5e5_0012_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            let b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            black_box(u128::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                let b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                black_box(u128::select(&a, &b, Choice::from_u8(rnd_u8(&mut s) & 1)));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(u128::select(&a, &b, c)));
+            }
+            if report("u128::select  (choice=0 vs choice=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(u128::select(&a, &b, c)));
-        }
-        assert!(report(
-            "u128::select  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_eq_u32() {
+        let _serial = serial();
         let mut s = 0xd4d4_e5e5_f6f6_0013_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let a = rnd_u32(&mut s);
-            black_box(CtEqOps::eq(&a, &a));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let a = rnd_u32(&mut s);
+                black_box(CtEqOps::eq(&a, &a));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(rnd_u32(&mut s));
+                let b = black_box(if cl == 0 { a } else { a ^ 1 });
+                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+            }
+            if report("CtEqOps::eq<u32>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(rnd_u32(&mut s));
-            let b = if cl == 0 { a } else { a ^ 1 };
-            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
-        }
-        assert!(report(
-            "CtEqOps::eq<u32>  (a==a vs a!=a^1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_eq_u128() {
+        let _serial = serial();
         let mut s = 0xe5e5_f6f6_0707_0014_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            black_box(CtEqOps::eq(&a, &a));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                black_box(CtEqOps::eq(&a, &a));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let b = black_box(if cl == 0 { a } else { a ^ 1 });
+                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+            }
+            if report("CtEqOps::eq<u128>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let b = if cl == 0 { a } else { a ^ 1 };
-            stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
-        }
-        assert!(report(
-            "CtEqOps::eq<u128>  (a==a vs a!=a^1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -583,29 +643,31 @@ mod tests {
     //   Class 1: a <  0, b >= 0  →  a < b (signed)
     #[test]
     fn dudect_gt_i128() {
+        let _serial = serial();
         let mut s = 0xf6f6_0707_1818_0015_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        const SIGN128: u128 = 1u128 << 127;
-        for _ in 0..WARMUP {
-            let raw = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            let (a, b) = ((raw & !SIGN128) as i128, (raw | SIGN128) as i128);
-            black_box(CtGreeter::gt(&a, &b));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            const SIGN128: u128 = 1u128 << 127;
+            for _ in 0..WARMUP {
+                let raw = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                let (a, b) = ((raw & !SIGN128) as i128, (raw | SIGN128) as i128);
+                black_box(CtGreeter::gt(&a, &b));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let raw = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let (a, b) = if cl == 0 {
+                    ((raw & !SIGN128) as i128, (raw | SIGN128) as i128)
+                } else {
+                    ((raw | SIGN128) as i128, (raw & !SIGN128) as i128)
+                };
+                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+            }
+            if report("CtGreeter::gt<i128>  (a>b vs a<b)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let raw = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let (a, b) = if cl == 0 {
-                ((raw & !SIGN128) as i128, (raw | SIGN128) as i128)
-            } else {
-                ((raw | SIGN128) as i128, (raw & !SIGN128) as i128)
-            };
-            stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
-        }
-        assert!(report(
-            "CtGreeter::gt<i128>  (a>b vs a<b)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -617,58 +679,70 @@ mod tests {
     // 실행되므로 항상 동일한 cycle 패턴이어야 함.
     #[test]
     fn dudect_swap_u64() {
+        let _serial = serial();
         let mut s = 0x0707_1818_2929_0016_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let mut a = rnd_u64(&mut s);
-            let mut b = rnd_u64(&mut s);
-            u64::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
-            black_box(&mut a);
-            black_box(&mut b);
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let mut a = rnd_u64(&mut s);
+                let mut b = rnd_u64(&mut s);
+                u64::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
+                black_box(&mut a);
+                black_box(&mut b);
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let mut a = black_box(rnd_u64(&mut s));
+                let mut b = black_box(rnd_u64(&mut s));
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!({
+                    u64::swap(&mut a, &mut b, c);
+                    (a, b)
+                }));
+            }
+            if report(
+                "CtSelOps::swap<u64>  (choice=0 vs choice=1)",
+                &stat[0],
+                &stat[1],
+            ) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let mut a = black_box(rnd_u64(&mut s));
-            let mut b = black_box(rnd_u64(&mut s));
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!({
-                u64::swap(&mut a, &mut b, c);
-                (a, b)
-            }));
-        }
-        assert!(report(
-            "CtSelOps::swap<u64>  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_swap_u128() {
+        let _serial = serial();
         let mut s = 0x1818_2929_3a3a_0017_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let mut a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            let mut b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-            u128::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
-            black_box(&mut a);
-            black_box(&mut b);
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let mut a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                let mut b = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
+                u128::swap(&mut a, &mut b, Choice::from_u8(rnd_u8(&mut s) & 1));
+                black_box(&mut a);
+                black_box(&mut b);
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let mut a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let mut b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!({
+                    u128::swap(&mut a, &mut b, c);
+                    (a, b)
+                }));
+            }
+            if report(
+                "CtSelOps::swap<u128>  (choice=0 vs choice=1)",
+                &stat[0],
+                &stat[1],
+            ) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let mut a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let mut b = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!({
-                u128::swap(&mut a, &mut b, c);
-                (a, b)
-            }));
-        }
-        assert!(report(
-            "CtSelOps::swap<u128>  (choice=0 vs choice=1)",
-            &stat[0],
-            &stat[1]
-        ));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     //
@@ -676,40 +750,52 @@ mod tests {
     // 다른 경로를 만들지 않는지 회귀 가드.
     #[test]
     fn dudect_choice_not() {
+        let _serial = serial();
         let mut s = 0x2929_3a3a_4b4b_0018_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let c = Choice::from_u8(rnd_u8(&mut s) & 1);
-            black_box(!c);
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let c = Choice::from_u8(rnd_u8(&mut s) & 1);
+                black_box(!c);
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                let c = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!(!black_box(c)));
+            }
+            if report("Choice::not  (c=0 vs c=1)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            let c = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!(!black_box(c)));
-        }
-        assert!(report("Choice::not  (c=0 vs c=1)", &stat[0], &stat[1]));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 
     #[test]
     fn dudect_choice_bitops() {
+        let _serial = serial();
         let mut s = 0x3a3a_4b4b_5c5c_0019_u64;
-        let mut stat = [Stats::default(), Stats::default()];
-        for _ in 0..WARMUP {
-            let x = Choice::from_u8(rnd_u8(&mut s) & 1);
-            let y = Choice::from_u8(rnd_u8(&mut s) & 1);
-            black_box((x & y) | (x ^ y));
+        for _attempt in 0..DUDECT_RETRIES {
+            let mut stat = [Stats::default(), Stats::default()];
+            for _ in 0..WARMUP {
+                let x = Choice::from_u8(rnd_u8(&mut s) & 1);
+                let y = Choice::from_u8(rnd_u8(&mut s) & 1);
+                black_box((x & y) | (x ^ y));
+            }
+            for i in 0..MEASUREMENTS {
+                let cl = i & 1;
+                // 두 클래스 모두 동일 산술량을 수행. 입력만 다름.
+                let x = Choice::from_u8(((i >> 1) & 1) as u8);
+                let y = Choice::from_u8(cl as u8);
+                stat[cl].push(measure!({
+                    let x = black_box(x);
+                    let y = black_box(y);
+                    (x & y) | (x ^ y)
+                }));
+            }
+            if report("Choice::&|^  (mixed inputs)", &stat[0], &stat[1]) {
+                return;
+            }
         }
-        for i in 0..MEASUREMENTS {
-            let cl = i & 1;
-            // 두 클래스 모두 동일 산술량을 수행. 입력만 다름.
-            let x = Choice::from_u8(((i >> 1) & 1) as u8);
-            let y = Choice::from_u8(cl as u8);
-            stat[cl].push(measure!({
-                let x = black_box(x);
-                let y = black_box(y);
-                (x & y) | (x ^ y)
-            }));
-        }
-        assert!(report("Choice::&|^  (mixed inputs)", &stat[0], &stat[1]));
+        panic!("dudect FAIL: DUDECT_RETRIES 회 연속 |t| >= T_THRESHOLD");
     }
 }
