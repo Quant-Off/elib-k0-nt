@@ -385,6 +385,19 @@ mod tests {
         assert_eq!(tag, expected_tag);
     }
 
+    /// 빈 메시지의 태그는 r 와 무관하게 s 그 자체 (h=0 이므로 tag = s mod 2^128).
+    #[test]
+    fn test_poly1305_empty_message() {
+        let mut key = [0xA5u8; 32];
+        key[16..].copy_from_slice(&[
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+            0xFF, 0x10,
+        ]);
+        let poly = Poly1305::new(&key);
+        let tag = poly.finalize();
+        assert_eq!(&tag[..], &key[16..], "빈 메시지 태그가 s 와 다름");
+    }
+
     #[test]
     fn test_poly1305_verify_constant_time() {
         let tag1: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];

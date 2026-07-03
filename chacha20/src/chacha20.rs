@@ -201,6 +201,32 @@ mod tests {
         }
     }
 
+    /// 카운터 소진 후 keystream_block 재호출은 키스트림 재사용이므로 어보트해야 함.
+    #[test]
+    #[should_panic(expected = "카운터 소진")]
+    fn test_counter_exhaustion_keystream_block() {
+        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let _ = chacha.keystream_block();
+        let _ = chacha.keystream_block();
+    }
+
+    /// 잔여 카운터 용량을 초과하는 apply_keystream 은 데이터 처리 전에 어보트해야 함.
+    #[test]
+    #[should_panic(expected = "카운터 소진")]
+    fn test_counter_exhaustion_apply_keystream() {
+        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let mut data = [0u8; 128];
+        chacha.apply_keystream(&mut data);
+    }
+
+    /// 카운터가 0 이 아닌 상태에서 Poly1305 키 생성은 소진 추적 우회이므로 거부되어야 함.
+    #[test]
+    #[should_panic(expected = "블록 카운터 0")]
+    fn test_poly1305_keygen_requires_counter_zero() {
+        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], 1);
+        let _ = chacha.generate_poly1305_key();
+    }
+
     #[test]
     fn test_chacha20_block_rfc8439_vector() {
         let key: [u8; 32] = [

@@ -1,6 +1,7 @@
 target/
 .idea/
 dist/
+.DS_Store
 *.iso
 Cargo.lock
 CLAUDE.md
