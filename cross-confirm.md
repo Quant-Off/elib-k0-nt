@@ -9,7 +9,7 @@
 - [X] BLAKE
 - [X] SHA2
 - [X] SHA3
-- [ ] ChaCha20
+- [X] ChaCha20
 - [X] Ed448
 - [X] Ed25519
 - [X] X448

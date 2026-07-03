@@ -86,10 +86,11 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
 pub struct ChaCha20 {
     key: Secret<[u8; 32]>,
     nonce: [u8; 12],
-    counter: u32,
+    counter: u64,
 }
 
 impl ChaCha20 {
+    #[must_use]
     pub fn new(key: &[u8; 32], nonce: &[u8; 12]) -> Self {
         Self {
             key: Secret::new(*key),
@@ -98,21 +99,33 @@ impl ChaCha20 {
         }
     }
 
+    #[must_use]
     pub fn new_with_counter(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> Self {
         Self {
             key: Secret::new(*key),
             nonce: *nonce,
-            counter,
+            counter: u64::from(counter),
         }
     }
 
+    #[must_use]
     pub fn keystream_block(&mut self) -> [u8; 64] {
-        let block = chacha20_block(self.key.expose(), self.counter, &self.nonce);
-        self.counter = self.counter.wrapping_add(1);
+        assert!(
+            self.counter <= u64::from(u32::MAX),
+            "RFC 8439 32비트 블록 카운터 소진으로 키스트림 재사용 발생"
+        );
+        let block = chacha20_block(self.key.expose(), self.counter as u32, &self.nonce);
+        self.counter += 1;
         block
     }
 
     pub fn apply_keystream(&mut self, data: &mut [u8]) {
+        let blocks = data.len().div_ceil(64) as u64;
+        assert!(
+            blocks <= (1u64 << 32) - self.counter,
+            "RFC 8439 32비트 블록 카운터 소진으로 키스트림 재사용 발생"
+        );
+
         let mut offset = 0;
         while offset < data.len() {
             let mut keystream = self.keystream_block();
@@ -128,7 +141,12 @@ impl ChaCha20 {
         }
     }
 
+    #[must_use]
     pub fn generate_poly1305_key(&mut self) -> [u8; 32] {
+        assert!(
+            self.counter == 0,
+            "RFC 8439 Poly1305 키 생성은 블록 카운터 0 에서만 허용"
+        );
         let mut block = chacha20_block(self.key.expose(), 0, &self.nonce);
         let mut poly_key = [0u8; 32];
         poly_key.copy_from_slice(&block[..32]);
