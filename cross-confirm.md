@@ -15,7 +15,7 @@
 - [X] X448
 - [X] X25519
 - [X] ML-DSA
-- [ ] ML-KEM
+- [X] ML-KEM
 - [X] RNG
 - [X] Constant-Time
 - [X] Zeroize
