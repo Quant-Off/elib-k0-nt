@@ -125,7 +125,8 @@ pub fn decaps<const K: usize>(
     let h_ek: [u8; 32] = dk[polyvec_bytes + ek_len..polyvec_bytes + ek_len + SYMBYTES]
         .try_into()
         .unwrap();
-    let mut z: [u8; 32] = dk[polyvec_bytes + ek_len + SYMBYTES..polyvec_bytes + ek_len + 2 * SYMBYTES]
+    let mut z: [u8; 32] = dk
+        [polyvec_bytes + ek_len + SYMBYTES..polyvec_bytes + ek_len + 2 * SYMBYTES]
         .try_into()
         .unwrap();
 

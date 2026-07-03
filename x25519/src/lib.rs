@@ -63,10 +63,7 @@ impl SecretKey {
         PublicKey(public_bytes)
     }
 
-    pub fn diffie_hellman(
-        &self,
-        their_public: &PublicKey,
-    ) -> Result<SharedSecret, X25519Error> {
+    pub fn diffie_hellman(&self, their_public: &PublicKey) -> Result<SharedSecret, X25519Error> {
         let mut shared = x25519(self.0.expose(), &their_public.0);
         let result = SharedSecret(Secret::new(shared));
         shared.zeroize();
@@ -304,7 +301,11 @@ mod tests {
         let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(alice_secret.diffie_hellman(&bob_pk).expect("정상 공개키는 Ok 여야 함"));
+            storage.write(
+                alice_secret
+                    .diffie_hellman(&bob_pk)
+                    .expect("정상 공개키는 Ok 여야 함"),
+            );
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 32);
