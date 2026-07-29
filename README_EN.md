@@ -22,4 +22,4 @@ We are preparing a release to correct several issues and compliance-related impl
 
 # License
 
-This project is under the [MIT LICENSE](LICENSE-MIT).
+This project is dual-licensed under either the [MIT LICENSE](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.
