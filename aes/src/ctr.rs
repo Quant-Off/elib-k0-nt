@@ -1,4 +1,4 @@
-use crate::AES256;
+use crate::{AES256, Error};
 use zeroize::Zeroize;
 
 pub const CTR_NONCE_SIZE: usize = 12;
@@ -49,44 +49,64 @@ impl AES256CTR {
         }
     }
 
-    pub fn apply_iv(&self, iv: &[u8; CTR_IV_SIZE], input: &[u8], output: &mut [u8]) {
-        assert!(
-            output.len() >= input.len(),
-            "출력 버퍼가 입력보다 작아 무음 절단 발생"
-        );
-        assert!(
-            input.len() as u64 <= CTR_MAX_INPUT_LEN,
-            "입력 길이 한계(2^32 블록) 초과로 카운터 재사용 발생"
-        );
+    pub fn apply_iv(
+        &self,
+        iv: &[u8; CTR_IV_SIZE],
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(), Error> {
+        if output.len() < input.len() {
+            return Err(Error::BufferTooSmall);
+        }
+        if input.len() as u64 > CTR_MAX_INPUT_LEN {
+            return Err(Error::InputTooLong);
+        }
         let mut counter = *iv;
         self.apply_internal(&mut counter, input, output);
         counter.zeroize();
+
+        Ok(())
     }
 
-    pub fn apply(&self, nonce: &[u8; CTR_NONCE_SIZE], input: &[u8], output: &mut [u8]) {
-        assert!(
-            output.len() >= input.len(),
-            "출력 버퍼가 입력보다 작아 무음 절단 발생"
-        );
-        assert!(
-            input.len() as u64 <= CTR_MAX_INPUT_LEN,
-            "입력 길이 한계(2^32 블록) 초과로 카운터 재사용 발생"
-        );
+    pub fn apply(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(), Error> {
+        if output.len() < input.len() {
+            return Err(Error::BufferTooSmall);
+        }
+        if input.len() as u64 > CTR_MAX_INPUT_LEN {
+            return Err(Error::InputTooLong);
+        }
         let mut counter = [0u8; 16];
         counter[..12].copy_from_slice(nonce);
         counter[12..16].copy_from_slice(&1u32.to_be_bytes());
         self.apply_internal(&mut counter, input, output);
         counter.zeroize();
+
+        Ok(())
     }
 
     #[inline]
-    pub fn encrypt(&self, nonce: &[u8; CTR_NONCE_SIZE], plaintext: &[u8], ciphertext: &mut [u8]) {
-        self.apply(nonce, plaintext, ciphertext);
+    pub fn encrypt(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        plaintext: &[u8],
+        ciphertext: &mut [u8],
+    ) -> Result<(), Error> {
+        self.apply(nonce, plaintext, ciphertext)
     }
 
     #[inline]
-    pub fn decrypt(&self, nonce: &[u8; CTR_NONCE_SIZE], ciphertext: &[u8], plaintext: &mut [u8]) {
-        self.apply(nonce, ciphertext, plaintext);
+    pub fn decrypt(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        ciphertext: &[u8],
+        plaintext: &mut [u8],
+    ) -> Result<(), Error> {
+        self.apply(nonce, ciphertext, plaintext)
     }
 }
 
@@ -122,11 +142,11 @@ mod tests {
 
         let ctr = AES256CTR::new(&key);
         let mut ciphertext = [0u8; 64];
-        ctr.apply_iv(&iv, &plaintext, &mut ciphertext);
+        ctr.apply_iv(&iv, &plaintext, &mut ciphertext).unwrap();
         assert_eq!(ciphertext, expected_ciphertext);
 
         let mut decrypted = [0u8; 64];
-        ctr.apply_iv(&iv, &ciphertext, &mut decrypted);
+        ctr.apply_iv(&iv, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -138,10 +158,22 @@ mod tests {
 
         let ctr = AES256CTR::new(&key);
         let mut ciphertext = [0u8; 20];
-        ctr.encrypt(&nonce, &plaintext, &mut ciphertext);
+        ctr.encrypt(&nonce, &plaintext, &mut ciphertext).unwrap();
 
         let mut decrypted = [0u8; 20];
-        ctr.decrypt(&nonce, &ciphertext, &mut decrypted);
+        ctr.decrypt(&nonce, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn ctr_buffer_too_small() {
+        let key = [0x11u8; 32];
+        let nonce = [0x22u8; 12];
+        let input = [0x33u8; 32];
+
+        let ctr = AES256CTR::new(&key);
+        let mut output = [0u8; 16];
+        let result = ctr.apply(&nonce, &input, &mut output);
+        assert_eq!(result, Err(Error::BufferTooSmall));
     }
 }

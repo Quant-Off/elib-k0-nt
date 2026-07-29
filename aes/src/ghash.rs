@@ -1,4 +1,4 @@
-use zeroize::Zeroize;
+use zeroize::{Secret, Zeroize};
 
 // 32 비트 다항식(carryless) 곱셈
 // BearSSL `bmul32` 트릭: 피연산자를 4비트 간격 (mask 0x1111_1111) 로 4등분하여
@@ -101,25 +101,25 @@ fn gf128_mul(x: u128, y: u128) -> u128 {
 
 pub struct GHash {
     // 자연 순서로 변환된 H. 매 update 마다의 비트 역변환 비용 제거
-    h_n: u128,
+    h_n: Secret<u128>,
     // 자연 순서 누적 상태. finalize 시점에 GHASH 표기로 역변환
-    state_n: u128,
+    state_n: Secret<u128>,
 }
 
 impl GHash {
     #[must_use]
     pub fn new(h: &[u8; 16]) -> Self {
         Self {
-            h_n: u128::from_be_bytes(*h).reverse_bits(),
-            state_n: 0,
+            h_n: Secret::new(u128::from_be_bytes(*h).reverse_bits()),
+            state_n: Secret::new(0),
         }
     }
 
     pub fn update(&mut self, block: &[u8; 16]) {
         let x_n = u128::from_be_bytes(*block).reverse_bits();
-        let combined = self.state_n ^ x_n;
-        let (lo, hi) = poly_mul_128(combined, self.h_n);
-        self.state_n = reduce_natural(lo, hi);
+        let combined = *self.state_n.expose() ^ x_n;
+        let (lo, hi) = poly_mul_128(combined, *self.h_n.expose());
+        *self.state_n.expose_mut() = reduce_natural(lo, hi);
     }
 
     pub fn update_padded(&mut self, data: &[u8]) {
@@ -139,17 +139,10 @@ impl GHash {
 
     #[must_use]
     pub fn finalize(self) -> [u8; 16] {
-        self.state_n.reverse_bits().to_be_bytes()
+        self.state_n.expose().reverse_bits().to_be_bytes()
     }
 
     pub fn reset(&mut self) {
-        self.state_n.zeroize();
-    }
-}
-
-impl Drop for GHash {
-    fn drop(&mut self) {
-        self.h_n.zeroize();
         self.state_n.zeroize();
     }
 }
@@ -171,8 +164,8 @@ mod tests {
             // update 로 state 를 0 이 아닌 값으로 만듦
             (*storage.as_mut_ptr()).update(&[0xAAu8; 16]);
 
-            let h_ptr = &raw const (*storage.as_ptr()).h_n as *const u8;
-            let s_ptr = &raw const (*storage.as_ptr()).state_n as *const u8;
+            let h_ptr = (*storage.as_ptr()).h_n.expose() as *const u128 as *const u8;
+            let s_ptr = (*storage.as_ptr()).state_n.expose() as *const u128 as *const u8;
 
             let pre_h = core::slice::from_raw_parts(h_ptr, 16);
             let pre_s = core::slice::from_raw_parts(s_ptr, 16);

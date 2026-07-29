@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::sbox::{inv_sub_bytes_block, sub_bytes_block};
+use constant_time::{Choice, CtSelOps};
 use zeroize::Zeroize;
 
 const NB: usize = 4;
@@ -113,18 +114,18 @@ fn inv_shift_rows(state: &mut State) {
 
 #[inline]
 fn xtime(x: u8) -> u8 {
-    let hi = (x >> 7) & 1;
-    let shifted = x << 1;
-    shifted ^ (hi * 0x1b)
+    let hi = Choice::from_u8((x >> 7) & 1);
+    (x << 1) ^ u8::select(&0x00, &0x1b, hi)
 }
 
 #[inline]
 fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     let mut p = 0u8;
     for _ in 0..8 {
-        p ^= a & ((b & 1).wrapping_neg());
-        let hi = (a >> 7) & 1;
-        a = (a << 1) ^ (hi * 0x1b);
+        let bit = Choice::from_u8(b & 1);
+        p ^= u8::select(&0x00, &a, bit);
+        let hi = Choice::from_u8((a >> 7) & 1);
+        a = (a << 1) ^ u8::select(&0x00, &0x1b, hi);
         b >>= 1;
     }
     p

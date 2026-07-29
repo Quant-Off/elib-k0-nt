@@ -20,7 +20,7 @@
 //! let gcm = AES256GCM::new(&key);
 //! let mut ciphertext = [0u8; 16];
 //! let mut tag = [0u8; GCM_TAG_SIZE];
-//! gcm.encrypt(&nonce, &[], plaintext, &mut ciphertext, &mut tag);
+//! gcm.encrypt(&nonce, &[], plaintext, &mut ciphertext, &mut tag).unwrap();
 //! ```
 //!
 //! # Security Note
@@ -47,6 +47,15 @@ pub use ghash::GHash;
 use block::{decrypt_block, encrypt_block};
 use key::expand_key;
 use zeroize::Secret;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    InvalidLength,
+    BufferTooSmall,
+    InputTooLong,
+    AadTooLong,
+    AuthenticationFailed,
+}
 
 const NB: usize = 4;
 const NR: usize = 14;

@@ -1,4 +1,4 @@
-use crate::AES256;
+use crate::{AES256, Error};
 use zeroize::Zeroize;
 
 pub const CBC_IV_SIZE: usize = 16;
@@ -15,15 +15,18 @@ impl AES256CBC {
         }
     }
 
-    pub fn encrypt(&self, iv: &[u8; CBC_IV_SIZE], plaintext: &[u8], ciphertext: &mut [u8]) {
-        assert!(
-            plaintext.len().is_multiple_of(16),
-            "평문 길이가 블록 크기의 배수가 아님"
-        );
-        assert!(
-            ciphertext.len() >= plaintext.len(),
-            "암호문 버퍼가 평문보다 작아 무음 절단 발생"
-        );
+    pub fn encrypt(
+        &self,
+        iv: &[u8; CBC_IV_SIZE],
+        plaintext: &[u8],
+        ciphertext: &mut [u8],
+    ) -> Result<(), Error> {
+        if !plaintext.len().is_multiple_of(16) {
+            return Err(Error::InvalidLength);
+        }
+        if ciphertext.len() < plaintext.len() {
+            return Err(Error::BufferTooSmall);
+        }
 
         let mut prev = *iv;
 
@@ -40,17 +43,22 @@ impl AES256CBC {
             prev = encrypted;
             block.zeroize();
         }
+
+        Ok(())
     }
 
-    pub fn decrypt(&self, iv: &[u8; CBC_IV_SIZE], ciphertext: &[u8], plaintext: &mut [u8]) {
-        assert!(
-            ciphertext.len().is_multiple_of(16),
-            "암호문 길이가 블록 크기의 배수가 아님"
-        );
-        assert!(
-            plaintext.len() >= ciphertext.len(),
-            "평문 버퍼가 암호문보다 작아 무음 절단 발생"
-        );
+    pub fn decrypt(
+        &self,
+        iv: &[u8; CBC_IV_SIZE],
+        ciphertext: &[u8],
+        plaintext: &mut [u8],
+    ) -> Result<(), Error> {
+        if !ciphertext.len().is_multiple_of(16) {
+            return Err(Error::InvalidLength);
+        }
+        if plaintext.len() < ciphertext.len() {
+            return Err(Error::BufferTooSmall);
+        }
 
         let mut prev = *iv;
 
@@ -68,6 +76,8 @@ impl AES256CBC {
             decrypted.zeroize();
             block.zeroize();
         }
+
+        Ok(())
     }
 }
 
@@ -103,11 +113,11 @@ mod tests {
 
         let cbc = AES256CBC::new(&key);
         let mut ciphertext = [0u8; 64];
-        cbc.encrypt(&iv, &plaintext, &mut ciphertext);
+        cbc.encrypt(&iv, &plaintext, &mut ciphertext).unwrap();
         assert_eq!(ciphertext, expected_ciphertext);
 
         let mut decrypted = [0u8; 64];
-        cbc.decrypt(&iv, &ciphertext, &mut decrypted);
+        cbc.decrypt(&iv, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -130,10 +140,34 @@ mod tests {
 
         let cbc = AES256CBC::new(&key);
         let mut ciphertext = [0u8; 32];
-        cbc.encrypt(&iv, &plaintext, &mut ciphertext);
+        cbc.encrypt(&iv, &plaintext, &mut ciphertext).unwrap();
 
         let mut decrypted = [0u8; 32];
-        cbc.decrypt(&iv, &ciphertext, &mut decrypted);
+        cbc.decrypt(&iv, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn cbc_invalid_length() {
+        let key = [0x11u8; 32];
+        let iv = [0x22u8; 16];
+        let plaintext = [0x33u8; 17];
+
+        let cbc = AES256CBC::new(&key);
+        let mut ciphertext = [0u8; 32];
+        let result = cbc.encrypt(&iv, &plaintext, &mut ciphertext);
+        assert_eq!(result, Err(Error::InvalidLength));
+    }
+
+    #[test]
+    fn cbc_buffer_too_small() {
+        let key = [0x11u8; 32];
+        let iv = [0x22u8; 16];
+        let plaintext = [0x33u8; 32];
+
+        let cbc = AES256CBC::new(&key);
+        let mut ciphertext = [0u8; 16];
+        let result = cbc.encrypt(&iv, &plaintext, &mut ciphertext);
+        assert_eq!(result, Err(Error::BufferTooSmall));
     }
 }
