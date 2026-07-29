@@ -18,4 +18,4 @@
 
 # 라이선스
 
-이 프로젝트는 [MIT LICENSE](LICENSE)하에 있습니다.
+이 프로젝트는 [MIT LICENSE](LICENSE-MIT) 또는 [Apache License 2.0](LICENSE-APACHE) 중 선택하여 사용할 수 있습니다.

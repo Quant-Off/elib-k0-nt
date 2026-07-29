@@ -18,4 +18,4 @@ Additionally, information about what scope AI agents are used for in this projec
 
 # License
 
-This project is under the [MIT LICENSE](LICENSE).
+This project is dual-licensed under either the [MIT LICENSE](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.
