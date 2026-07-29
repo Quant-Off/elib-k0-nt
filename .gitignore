@@ -6,3 +6,4 @@ dist/
 Cargo.lock
 CLAUDE.md
 .planning/
+cavp/

@@ -3,6 +3,10 @@
 [![Language](https://img.shields.io/badge/README-English_Ver-blue?style=for-the-badge)](README_EN.md)
 [![Qu4nt-Space-Discord](https://img.shields.io/badge/Qu4nt_Space-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/9utg4hp3m8)
 
+> [!IMPORTANT]
+> 정식 CMVP(Cryptographic Module Validation Program)를 거치지 않은 암호 모듈입니다. 연구 목적으로 사용해주세요.
+> 1.1.0 릴리즈 버전에선 각 암호 알고리즘의 구현과 검증, 정형 문서 작성이 이루어집니다.
+
 [Rust 기반 얽힘 라이브러리 네이티브 프로젝트](https://github.com/Quant-Off/entlib-native)는 가장 많이 사용되는 아키텍처에 대해 `std`(및 `no_std`)를 지원하며, 고보안 규격(국제적 규제 등 컴플라이언스)을 준수하는 데 초점을 맞춥니다. 이 모듈은 그런 부분에서 합리적입니다.
 
 이 모듈은 격리형 초경량 마이크로커널 K0(Isolation Lightweight Microkernel K0, ISO-LIGHT-K0)에서 Ring 3 사용자 공간(user space) 내에 데몬(daemon) 형식으로 구동되며 TUI와 IPC 메시지를 통해 암호화 통신합니다. 데몬은 Ring 0 커널 공간(kernel space) 속 IPC 엔드포인트 라우터로 데이터를 전송하는 방식으로 동작합니다.
@@ -15,8 +19,10 @@
 
 # 릴리즈 `1.1.0`
 
-과거 `1.0.0` 릴리즈에서 미처 발견하지 못 했던 몇 가지 문제와 컴플라이언스 측면에서의 구현 오류를 바로잡기 위해 릴리즈를 준비 중에 있습니다. 이 작업은 세밀하고 체계적인 교차 검증 작업을 기반으로 수행되며, 그 기록은 [이 문서](cross-confirm.md)에서 확인하실 수 있습니다. 해당 문서는 `1.1.0` 릴리즈가 공개되면 제거됩니다.
+과거 `1.0.0` 릴리즈에서 미처 발견하지 못 했던 몇 가지 문제와 컴플라이언스 측면에서의 구현 오류를 바로잡았습니다. 이 작업은 세밀하고 체계적인 교차 검증 작업을 기반으로 수행되며, 그 기록은 [이 문서](cross-confirm.md)에서 확인하실 수 있습니다. 해당 문서는 `1.1.0` 릴리즈가 공개되면 제거됩니다.
+
+이 릴리즈에선 개별 암호 알고리즘의 개발자 - Fable 5 - 전문가의 교차 검증 작업과 정형 문서 작성을 주력으로 검토했습니다. 이 과정에서 상당수의 보안 문제를 해결했습니다. 모든 구현된 암호 알고리즘이 정상적으로 구현되어 작동하는지 확인하기 위해 KCMVP의 CAVP(Cryptographic Algorithm Validation Program) 검증을 진행합니다.
 
 # 라이선스
 
-이 프로젝트는 [MIT LICENSE](LICENSE)하에 있습니다.
+이 프로젝트는 [MIT LICENSE](LICENSE-MIT) 또는 [Apache License 2.0](LICENSE-APACHE) 중 선택하여 사용할 수 있습니다.

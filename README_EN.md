@@ -22,4 +22,4 @@ We are preparing a release to correct several issues and compliance-related impl
 
 # License
 
-This project is under the [MIT LICENSE](LICENSE).
+This project is under the [MIT LICENSE](LICENSE-MIT).
