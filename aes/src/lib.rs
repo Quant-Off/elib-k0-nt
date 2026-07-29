@@ -41,7 +41,7 @@ mod sbox;
 
 pub use cbc::{AES256CBC, CBC_IV_SIZE};
 pub use ctr::{AES256CTR, CTR_IV_SIZE, CTR_NONCE_SIZE};
-pub use gcm::{AES256GCM, GCM_NONCE_SIZE, GCM_TAG_SIZE};
+pub use gcm::{AES256GCM, GCM_MIN_TAG_SIZE, GCM_NONCE_SIZE, GCM_TAG_SIZE};
 pub use ghash::GHash;
 
 use block::{decrypt_block, encrypt_block};

@@ -4,10 +4,12 @@ use constant_time::{Choice, CtEqOps};
 use zeroize::{Secret, Zeroize};
 
 pub const GCM_TAG_SIZE: usize = 16;
+pub const GCM_MIN_TAG_SIZE: usize = 12;
 pub const GCM_NONCE_SIZE: usize = 12;
 
 const GCM_MAX_INPUT_LEN: u64 = (1 << 36) - 32;
 const GCM_MAX_AAD_LEN: u64 = (1 << 61) - 1;
+const GCM_MAX_IV_LEN: u64 = (1 << 61) - 1;
 
 fn inc32(block: &mut [u8; 16]) {
     let mut carry = 1u16;
@@ -62,6 +64,24 @@ impl AES256GCM {
         j0
     }
 
+    fn compute_j0_iv(&self, iv: &[u8]) -> [u8; 16] {
+        if let Ok(nonce) = <&[u8; GCM_NONCE_SIZE]>::try_from(iv) {
+            return self.compute_j0(nonce);
+        }
+
+        let mut ghash = GHash::new(self.h.expose());
+        ghash.update_padded(iv);
+
+        let mut len_block = [0u8; 16];
+        let iv_bits = (iv.len() as u64) * 8;
+        len_block[8..].copy_from_slice(&iv_bits.to_be_bytes());
+        ghash.update(&len_block);
+
+        let j0 = ghash.finalize();
+        len_block.zeroize();
+        j0
+    }
+
     fn compute_tag(&self, aad: &[u8], ciphertext: &[u8], j0: &[u8; 16]) -> [u8; 16] {
         let mut ghash = GHash::new(self.h.expose());
 
@@ -101,6 +121,23 @@ impl AES256GCM {
         ciphertext: &mut [u8],
         tag: &mut [u8; GCM_TAG_SIZE],
     ) -> Result<(), Error> {
+        self.encrypt_with_iv(nonce, aad, plaintext, ciphertext, tag)
+    }
+
+    pub fn encrypt_with_iv(
+        &self,
+        iv: &[u8],
+        aad: &[u8],
+        plaintext: &[u8],
+        ciphertext: &mut [u8],
+        tag: &mut [u8],
+    ) -> Result<(), Error> {
+        if iv.is_empty() || iv.len() as u64 > GCM_MAX_IV_LEN {
+            return Err(Error::InvalidLength);
+        }
+        if tag.len() < GCM_MIN_TAG_SIZE || tag.len() > GCM_TAG_SIZE {
+            return Err(Error::InvalidLength);
+        }
         if ciphertext.len() < plaintext.len() {
             return Err(Error::BufferTooSmall);
         }
@@ -111,14 +148,16 @@ impl AES256GCM {
             return Err(Error::AadTooLong);
         }
 
-        let mut j0 = self.compute_j0(nonce);
+        let mut j0 = self.compute_j0_iv(iv);
         let mut icb = j0;
         inc32(&mut icb);
 
         self.gctr(&icb, plaintext, ciphertext);
 
-        *tag = self.compute_tag(aad, &ciphertext[..plaintext.len()], &j0);
+        let mut full_tag = self.compute_tag(aad, &ciphertext[..plaintext.len()], &j0);
+        tag.copy_from_slice(&full_tag[..tag.len()]);
 
+        full_tag.zeroize();
         icb.zeroize();
         j0.zeroize();
 
@@ -133,6 +172,23 @@ impl AES256GCM {
         tag: &[u8; GCM_TAG_SIZE],
         plaintext: &mut [u8],
     ) -> Result<(), Error> {
+        self.decrypt_with_iv(nonce, aad, ciphertext, tag, plaintext)
+    }
+
+    pub fn decrypt_with_iv(
+        &self,
+        iv: &[u8],
+        aad: &[u8],
+        ciphertext: &[u8],
+        tag: &[u8],
+        plaintext: &mut [u8],
+    ) -> Result<(), Error> {
+        if iv.is_empty() || iv.len() as u64 > GCM_MAX_IV_LEN {
+            return Err(Error::InvalidLength);
+        }
+        if tag.len() < GCM_MIN_TAG_SIZE || tag.len() > GCM_TAG_SIZE {
+            return Err(Error::InvalidLength);
+        }
         if plaintext.len() < ciphertext.len() {
             return Err(Error::BufferTooSmall);
         }
@@ -143,13 +199,13 @@ impl AES256GCM {
             return Err(Error::AadTooLong);
         }
 
-        let mut j0 = self.compute_j0(nonce);
+        let mut j0 = self.compute_j0_iv(iv);
 
         let mut expected_tag = self.compute_tag(aad, ciphertext, &j0);
 
         let mut eq = Choice::from_u8(1);
-        for i in 0..16 {
-            eq &= CtEqOps::eq(&tag[i], &expected_tag[i]);
+        for (given, expected) in tag.iter().zip(expected_tag.iter()) {
+            eq &= CtEqOps::eq(given, expected);
         }
         let authentic = eq.unwrap_u8() == 1;
         expected_tag.zeroize();
@@ -390,5 +446,125 @@ mod tests {
         let mut tag = [0u8; 16];
         let result = gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag);
         assert_eq!(result, Err(Error::BufferTooSmall));
+    }
+
+    fn hex_arr<const N: usize>(s: &str) -> [u8; N] {
+        assert_eq!(s.len(), N * 2);
+        let mut out = [0u8; N];
+        for (i, byte) in out.iter_mut().enumerate() {
+            let hi = char::from(s.as_bytes()[2 * i]).to_digit(16).unwrap() as u8;
+            let lo = char::from(s.as_bytes()[2 * i + 1]).to_digit(16).unwrap() as u8;
+            *byte = (hi << 4) | lo;
+        }
+        out
+    }
+
+    // GCM 스펙 Test Case 17 64비트 IV로 GHASH 기반 J0 경로 커버
+    #[test]
+    fn gcm_test_case_18() {
+        let key: [u8; 32] =
+            hex_arr("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
+        let iv: [u8; 8] = hex_arr("cafebabefacedbad");
+        let aad: [u8; 20] = hex_arr("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+        let plaintext: [u8; 60] = hex_arr(
+            "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+        );
+        let expected_ciphertext: [u8; 60] = hex_arr(
+            "c3762df1ca787d32ae47c13bf19844cbaf1ae14d0b976afac52ff7d79bba9de0feb582d33934a4f0954cc2363bc73f7862ac430e64abe499f47c9b1f",
+        );
+        let expected_tag: [u8; 16] = hex_arr("3a337dbf46a792c45e454913fe2ea8f2");
+
+        let gcm = AES256GCM::new(&key);
+        let mut ciphertext = [0u8; 60];
+        let mut tag = [0u8; 16];
+        gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ciphertext, &mut tag)
+            .unwrap();
+        assert_eq!(ciphertext, expected_ciphertext);
+        assert_eq!(tag, expected_tag);
+
+        let mut decrypted = [0u8; 60];
+        gcm.decrypt_with_iv(&iv, &aad, &ciphertext, &tag, &mut decrypted)
+            .unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    // GCM 스펙 Test Case 18 60바이트 IV로 GHASH J0 패딩 경로 커버
+    #[test]
+    fn gcm_test_case_19() {
+        let key: [u8; 32] =
+            hex_arr("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
+        let iv: [u8; 60] = hex_arr(
+            "9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b",
+        );
+        let aad: [u8; 20] = hex_arr("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+        let plaintext: [u8; 60] = hex_arr(
+            "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+        );
+        let expected_ciphertext: [u8; 60] = hex_arr(
+            "5a8def2f0c9e53f1f75d7853659e2a20eeb2b22aafde6419a058ab4f6f746bf40fc0c3b780f244452da3ebf1c5d82cdea2418997200ef82e44ae7e3f",
+        );
+        let expected_tag: [u8; 16] = hex_arr("a44a8266ee1c8eb0c8b5d4cf5ae9f19a");
+
+        let gcm = AES256GCM::new(&key);
+        let mut ciphertext = [0u8; 60];
+        let mut tag = [0u8; 16];
+        gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ciphertext, &mut tag)
+            .unwrap();
+        assert_eq!(ciphertext, expected_ciphertext);
+        assert_eq!(tag, expected_tag);
+
+        let mut decrypted = [0u8; 60];
+        gcm.decrypt_with_iv(&iv, &aad, &ciphertext, &tag, &mut decrypted)
+            .unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    // 절단 태그(96~120비트) 왕복과 파라미터 검증 오류 경로 커버
+    #[test]
+    fn gcm_truncated_tag_and_param_validation() {
+        let key = [0x11u8; 32];
+        let iv = [0x22u8; 12];
+        let aad: [u8; 0] = [];
+        let plaintext = [0x33u8; 24];
+
+        let gcm = AES256GCM::new(&key);
+        let mut ciphertext = [0u8; 24];
+        let mut full_tag = [0u8; 16];
+        gcm.encrypt(&iv, &aad, &plaintext, &mut ciphertext, &mut full_tag)
+            .unwrap();
+
+        for tag_len in GCM_MIN_TAG_SIZE..=GCM_TAG_SIZE {
+            let mut ct = [0u8; 24];
+            let mut tag = [0u8; 16];
+            gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ct, &mut tag[..tag_len])
+                .unwrap();
+            assert_eq!(ct, ciphertext);
+            assert_eq!(tag[..tag_len], full_tag[..tag_len]);
+
+            let mut pt = [0u8; 24];
+            gcm.decrypt_with_iv(&iv, &aad, &ciphertext, &tag[..tag_len], &mut pt)
+                .unwrap();
+            assert_eq!(pt, plaintext);
+
+            let mut bad = tag;
+            bad[tag_len - 1] ^= 1;
+            let mut pt2 = [0u8; 24];
+            assert_eq!(
+                gcm.decrypt_with_iv(&iv, &aad, &ciphertext, &bad[..tag_len], &mut pt2),
+                Err(Error::AuthenticationFailed)
+            );
+        }
+
+        let mut short_tag = [0u8; GCM_MIN_TAG_SIZE - 1];
+        let mut ct = [0u8; 24];
+        assert_eq!(
+            gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ct, &mut short_tag),
+            Err(Error::InvalidLength)
+        );
+        let mut pt = [0u8; 24];
+        assert_eq!(
+            gcm.decrypt_with_iv(&[], &aad, &ciphertext, &full_tag, &mut pt),
+            Err(Error::InvalidLength)
+        );
     }
 }
