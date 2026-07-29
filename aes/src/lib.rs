@@ -106,8 +106,8 @@ mod tests {
     use super::*;
     use core::mem::MaybeUninit;
 
-    /// AES256 의 round_keys 는 expand_key 결과로 키 정보를 포함.
-    /// Drop 후 round_keys 메모리가 0 으로 소거되는지 검증.
+    // AES256의 round_keys는 expand_key 결과로 키 정보를 포함함
+    // Drop 후 round_keys 메모리가 0으로 소거되는지 검증
     #[test]
     fn test_aes256_zeroize_on_drop() {
         let key = [0xA5u8; KEY_SIZE];
@@ -115,14 +115,13 @@ mod tests {
 
         unsafe {
             storage.write(AES256::new(&key));
-            // Secret<[u32; 60]> 의 inner 위치에 round_keys 저장
             let ptr = storage.assume_init_ref().round_keys.expose().as_ptr() as *const u8;
-            let byte_len = core::mem::size_of::<[u32; NB * (NR + 1)]>();
+            let byte_len = size_of::<[u32; NB * (NR + 1)]>();
 
             let pre = core::slice::from_raw_parts(ptr, byte_len);
             assert!(
                 pre.iter().any(|&b| b != 0),
-                "round_keys 가 비어 있음 — expand_key 가 동작하지 않음"
+                "round_keys 가 비어 있음, expand_key 가 동작하지 않음"
             );
 
             storage.assume_init_drop();
@@ -130,7 +129,7 @@ mod tests {
             let post = core::slice::from_raw_parts(ptr, byte_len);
             assert!(
                 post.iter().all(|&b| b == 0),
-                "AES256 round_keys 가 Drop 후 소거되지 않음"
+                "AES256 round_keys가 Drop 후 소거되지 않음"
             );
         }
     }

@@ -175,8 +175,8 @@ mod tests {
     use super::*;
     use core::mem::MaybeUninit;
 
-    /// AES256GCM 의 h (해시 서브키 = AES_K(0^128)) 는 키 정보 누출 위험.
-    /// Drop 후 h 와 내부 AES round_keys 가 0 으로 소거되는지 검증.
+    // AES256GCM의 h(해시 서브키 = AES_K(0^128))는 키 정보 누출 위험
+    // Drop 후 h와 내부 AES round_keys가 0으로 소거되는지 검증
     #[test]
     fn test_aes256gcm_zeroize_on_drop() {
         let key = [0x5Au8; 32];
@@ -191,7 +191,7 @@ mod tests {
                 .round_keys
                 .expose()
                 .as_ptr() as *const u8;
-            let rk_len = core::mem::size_of::<[u32; 60]>();
+            let rk_len = size_of::<[u32; 60]>();
 
             let pre_h = core::slice::from_raw_parts(h_ptr, 16);
             assert!(pre_h.iter().any(|&b| b != 0), "GCM h 가 비어 있음");
@@ -303,7 +303,7 @@ mod tests {
         assert_eq!(decrypted, plaintext);
     }
 
-    /// AAD 가 비어있지 않은 경로(len_block 의 aad_bits)와 60바이트 평문의 GCTR 부분 블록 경로는 이 KAT 만이 커버합니다.
+    // AAD가 비어있지 않은 경로(len_block 의 aad_bits)와 60바이트 평문의 GCTR 부분 블록 경로는 이 KAT 만이 커버합니다.
     #[test]
     fn gcm_test_case_17() {
         let key: [u8; 32] = [

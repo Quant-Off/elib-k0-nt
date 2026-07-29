@@ -31,9 +31,6 @@ pub fn state_to_block(state: &State) -> [u8; 16] {
     block
 }
 
-// SubBytes 는 셀 위치에 의존 안해서 행렬 -> 16 바이트 -> BP 회로 -> 16 바이트
-// -> 행렬 순서로 우회됌. 비트슬라이스 변환/복원 비용은 라운드 1회 약 60게이트
-// 수준으로, 셀별 256회 스캔(이전) 보다 압도적으로 작다!
 #[inline]
 fn sub_bytes(state: &mut State) {
     let mut bytes = [0u8; 16];
