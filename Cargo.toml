@@ -24,8 +24,6 @@ resolver = "3"
 version = "1.1.0"
 edition = "2024"
 authors = ["Q. T. Felix <qtfelix@qu4nt.space>"]
-# 루트 LICENSE-MIT / LICENSE-APACHE 와 동기화. SPDX 식별자로 명시해 다운스트림
-# 공급망 감사 도구 (cargo-deny 등) 가 인식하도록 함.
 license = "MIT OR Apache-2.0"
 
 [profile.dev]
