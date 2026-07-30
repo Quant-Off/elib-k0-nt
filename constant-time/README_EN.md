@@ -119,7 +119,24 @@ compile_error!("constant-time verified constant-time implementation is only avai
 
 This promotes the former `#[deprecated]` warning (soft) to a hard gate, ensuring that best-effort `black_box` fallbacks can never silently mix into high-security builds. `miri` cannot execute inline assembly, so it is exempted to allow validation of fallback logic. The gate message was confirmed in practice when an `riscv64gc-unknown-none-elf` build was rejected.
 
-As a remaining task, hardening to explicitly enable the aarch64 DIT bit and x86 DOITM — which are required for ISA-level data-independent timing guarantees on `cmov`/`csel` — is left for future work.
+For `cmov`/`csel` on x86_64/aarch64 to receive ISA-level data-independent timing guarantees, separate hardening is required: the aarch64 DIT bit and x86 DOITM. The aarch64 side has been addressed via [issue #11](https://github.com/Quant-Off/elib-k0-nt/issues/11) with an opt-in `DitGuard` API.
+
+### aarch64 DIT guard (issue #11)
+
+ARM architecturally guarantees data-independent timing for DIT-listed instructions such as `cmp`/`csel`/`cset` only when FEAT_DIT (ARMv8.4-A and later) is implemented and PSTATE.DIT is set to 1. [dit.rs](src/dit.rs) provides an RAII guard for this: `DitGuard::enter()` saves the previous PSTATE.DIT and sets it to 1 on entry into cryptographic operations, and restores the previous value on scope exit (Drop). Nested guards are safe.
+
+```rust
+let _dit = constant_time::DitGuard::enter();
+// constant-time operations in this scope run with DIT active
+```
+
+Three design decisions matter here.
+
+1. **Compile-time opt-in**: On cores without FEAT_DIT, accessing the DIT register is an UNDEFINED trap. A pure EL0 library cannot perform runtime feature detection (reading `ID_AA64PFR0_EL1`) without kernel cooperation, so the real asm is only generated in builds with `target_feature = "dit"` enabled (`aarch64-apple-darwin` enables it by default; `aarch64-unknown-none` requires `-C target-feature=+dit`). All other builds get a no-op, and the `DIT_HW_BACKED` constant distinguishes whether hardware backing is present.
+2. **Direct encoding notation**: To avoid assembler feature gating, the system register encoding `S3_3_C4_C2_5` is used directly instead of the `DIT` alias (the same technique as BoringSSL).
+3. **Residual risk on older cores**: Cores before ARMv8.4 (A53/A57/A72, etc.) have no DIT feature at all, so there is no way to enable it in code. That said, on all known implementations, `cmp`/`csel`/`cset` on general-purpose registers are empirically data-independent; DIT is the mechanism that elevates this to an architectural guarantee. In other words, on older cores the constant-time property of this crate rests on empirical evidence, and deployments requiring an architectural guarantee must use v8.4+ cores with a `+dit` build.
+
+On the x86 side, DOITM (IA32_UARCH_MISC_CTL) is a Ring-0-only MSR that a Ring-3 daemon cannot set. For x86_64 deployments, the kernel (ISO-LIGHT-K0) must configure DOITM at boot; this remains the integrator's responsibility.
 
 ---
 

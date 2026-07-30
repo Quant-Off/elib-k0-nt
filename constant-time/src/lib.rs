@@ -7,11 +7,12 @@
 //! 아키텍처에서는 `black_box` 기반 best-effort fallback으로 동작합니다.
 //!
 //! # Features
-//! - `Choice`: 항상 0 또는 1 값을 갖는 상수-시간 bool이며 비트 연산으로 조합됩니다
-//! - `CtSelOps`: 조건에 따라 두 값 중 하나를 선택하고 대입과 교환을 파생합니다
-//! - `CtEqOps`: 두 값의 동등 여부를 상수-시간에 판정합니다
-//! - `CtGtOps`: 두 값의 대소를 상수-시간에 판정합니다
-//! - `CtLess`: `CtEqOps`와 `CtGtOps`를 만족하는 모든 타입에 자동으로 제공됩니다
+//! - `Choice`: 항상 0 또는 1 값을 갖는 상수-시간 bool이며 비트 연산으로 조합됩니다.
+//! - `CtSelOps`: 조건에 따라 두 값 중 하나를 선택하고 대입과 교환을 파생합니다.
+//! - `CtEqOps`: 두 값의 동등 여부를 상수-시간에 판정합니다.
+//! - `CtGtOps`: 두 값의 대소를 상수-시간에 판정합니다.
+//! - `CtLess`: `CtEqOps`와 `CtGtOps`를 만족하는 모든 타입에 자동으로 제공됩니다.
+//! - `DitGuard`: AArch64 PSTATE.DIT를 암호 연산 구간 동안 설정하는 옵트-인(opt-in) [RAII](https://doc.rust-lang.org/rust-by-example/scope/raii.html) 가드입니다.
 //!
 //! # Examples
 //! ```rust,ignore
@@ -22,8 +23,11 @@
 //! ```
 #![cfg_attr(not(test), no_std)]
 
+mod dit;
 mod internal;
 pub mod traits;
+
+pub use dit::{DIT_HW_BACKED, DitGuard};
 
 use crate::private::Sealed;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};

@@ -48,14 +48,21 @@
 
 ### AES
 
+- [lib.rs](aes/src/lib.rs), [ghash.rs](aes/src/ghash.rs), [sbox.rs](aes/src/sbox.rs), [cbc.rs](aes/src/cbc.rs), [ctr.rs](aes/src/ctr.rs), [gcm.rs](aes/src/gcm.rs) 내에 테스트 모듈 작성 (Opus 4.8)
+- `ghash.rs` 내 `bitsliced_sbox` 함수 (Opus 4.8)
+- KCMVP 간편 테스트기 [kcmvp_cbc_ctr.rs](aes/tests/kcmvp_cbc_ctr.rs), [kcmvp_gcm.rs](aes/tests/kcmvp_gcm.rs) 모듈 작성 (Fable 5) 
+- [baremetal.rs](aes/tests/baremetal.rs) 테스트 모듈 작성 (Fable 5)
+
 ### BLAKE
 
 ### ChaCha20
 
 ### Constant-Time
 
-- 각 파일에서 스플릿 형식 `//` 주석 (Sonnet 4.5)
+- [lib.rs](constant-time/src/lib.rs) 파일 내 스플릿 형식 `//` 주석 (Sonnet 4.5)
 - [src/lib.rs의 ct_sel_swap_value_roundtrip 테스트 함수](https://github.com/Quant-Off/elib-k0-nt/blob/7d3a0b8389fcc0a5bcbef22ae70fa380ce420614/constant-time/src/lib.rs#L732) (Opus 4.8)
+- [dit.rs](constant-time/src/dit.rs) 내 imp 모듈 아이디어 및 `//` 주석 (Fable 5)
+- [README.md](constant-time/README.md) 내 "aarch64 DIT 가드" 섹션 내용 (Opus 5)
 
 ### Ed448
 

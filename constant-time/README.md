@@ -119,7 +119,24 @@ compile_error!("constant-time 의 검증된 상수-시간 구현은 x86_64와 aa
 
 이로써 기존 `#[deprecated]` 경고(soft)를 하드 게이트로 승격했고, best-effort `black_box` fallback이 고보안 빌드에 조용히 섞일 일이 없어졌습니다. `miri`는 인-라인 어셈블리를 실행하지 못하므로 fallback 로직 검증을 위해 예외로 둡니다. 실제로 `riscv64gc-unknown-none-elf` 빌드가 이 게이트 메시지로 거부되는 것을 확인했습니다.
 
-남은 과제로, x86_64/aarch64의 `cmov`/`csel`이 ISA 차원에서 데이터 독립 시간을 보장받으려면 aarch64 DIT 비트와 x86 DOITM을 켜는 하드닝이 별도로 필요하며 이는 향후 다룰 예정입니다.
+x86_64/aarch64의 `cmov`/`csel`이 ISA 차원에서 데이터 독립 시간을 보장받으려면 aarch64 DIT 비트와 x86 DOITM을 켜는 하드닝이 별도로 필요합니다. 이 중 aarch64 쪽은 [이슈 #11](https://github.com/Quant-Off/elib-k0-nt/issues/11) 대응으로 옵트인 `DitGuard` API 를 도입해 해결했습니다.
+
+### aarch64 DIT 가드 (이슈 #11 대응)
+
+ARM은 FEAT_DIT(ARMv8.4-A 이상)가 구현되고 PSTATE.DIT=1인 경우에만 `cmp`/`csel`/`cset` 등 DIT 목록 명령의 데이터 독립 시간을 아키텍처 차원에서 보장합니다. 이를 위해 [dit.rs](src/dit.rs)에 RAII 가드를 두었습니다. 암호 연산 진입 시 `DitGuard::enter()`로 이전 PSTATE.DIT 를 저장하고 1로 설정하며, 스코프 이탈(Drop) 시 이전 값을 복원합니다. 중첩 생성도 안전합니다.
+
+```rust
+let _dit = constant_time::DitGuard::enter();
+// 이 스코프의 상수-시간 연산은 DIT 활성 상태에서 수행됨
+```
+
+설계 결정 세 가지가 중요합니다.
+
+1. **컴파일 타임 옵트인**: FEAT_DIT 미구현 코어에서 DIT 레지스터 접근은 UNDEFINED 트랩입니다. EL0 순수 라이브러리는 커널 협조 없이 런타임 기능 감지(`ID_AA64PFR0_EL1` 읽기)가 불가능하므로, 실제 asm 은 `target_feature = "dit"`가 켜진 빌드에서만 생성됩니다(`aarch64-apple-darwin`은 기본 활성, `aarch64-unknown-none`은 `-C target-feature=+dit` 필요). 그 외 빌드는 no-op이며 `DIT_HW_BACKED` 상수로 하드웨어 보장 여부를 구분합니다.
+2. **인코딩 직접 표기**: 어셈블러 기능 게이트를 피하기 위해 `DIT` 별칭 대신 시스템 레지스터 인코딩 `S3_3_C4_C2_5`를 직접 사용합니다(BoringSSL과 동일한 기법).
+3. **구형 코어 잔여 위험**: ARMv8.4 이전 코어(A53/A57/A72 등)에는 DIT 기능 자체가 없어 코드로 켤 방법이 없습니다. 다만 알려진 모든 구현에서 범용 레지스터 대상 `cmp`/`csel`/`cset`은 실측상 데이터 독립이며, DIT는 이를 아키텍처 보증으로 격상하는 장치입니다. 즉 구형 코어에서 이 크레이트의 상수-시간 성질은 실측 근거에 의존하며, 아키텍처 보증이 필요한 배포는 v8.4 이상 코어 + `+dit` 빌드를 사용해야 합니다.
+
+x86쪽 DOITM(IA32_UARCH_MISC_CTL)은 Ring 0 전용 MSR 이라 Ring 3 데몬이 설정할 수 없습니다. x86_64 배포에서는 K0 커널이 부트 시 DOITM을 설정해야 하며 **이는 통합 측 책임**으로 남습니다.
 
 ---
 
