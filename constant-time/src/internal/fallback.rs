@@ -1,13 +1,11 @@
-//
-// 다른 아키텍처에 의해 처리되지 않는 모든 아키텍처를 위한 일반 fallback 모듈입니다. 이 모듈은 다음의 보안 게이트를
-// 형성합니다.
-//
-// 이 일반 fallback은 best-effort 최적화 배리어인 `core::hint::black_box`에 의존하므로 하드웨어
-// 수준 상수-시간을 보장하지 않습니다. 검증된 인-라인 어셈블리 구현이 있는 x86_64와 aarch64만 지원 타겟으로
-// 확정하고, 그 외 아키텍처의 비 miri 빌드는 아래 `compile_error!`로 컴파일 단계에서 거부하여 best-
-// effort 경로가 고보안 빌드에 섞이지 않도록 합니다. miri는 인-라인 어셈블리를 실행하지 못하므로 fallback
-// 로직 검증을 위해 예외로 둡니다.
-//
+//! 다른 아키텍처에 의해 처리되지 않는 모든 아키텍처를 위한 일반 fallback 모듈입니다. 이 모듈은 다음의 보안 게이트를
+//! 형성합니다.
+//!
+//! 이 일반 fallback은 best-effort 최적화 배리어인 `core::hint::black_box`에 의존하므로 하드웨어
+//! 수준 상수-시간을 보장하지 않습니다. 검증된 인-라인 어셈블리 구현이 있는 x86_64와 aarch64만 지원 타겟으로
+//! 확정하고, 그 외 아키텍처의 비 miri 빌드는 아래 `compile_error!`로 컴파일 단계에서 거부하여 best-
+//! effort 경로가 고보안 빌드에 섞이지 않도록 합니다. miri는 인-라인 어셈블리를 실행하지 못하므로 fallback
+//! 로직 검증을 위해 예외로 둡니다.
 
 /// 조건 바이트로부터 상수-시간 비트 마스크를 생성하는 함수입니다.
 ///
@@ -19,7 +17,6 @@
 /// # Security Note
 /// 이 fallback 경로는 `core::hint::black_box`에 의존하는 best-effort
 /// 구현이므로 상수-시간 성질이 하드웨어 수준으로 보장되지는 않습니다.
-
 #[inline(never)]
 pub(crate) fn ct_mask(cond: u8) -> u64 {
     let c = core::hint::black_box(cond as u64);
