@@ -25,12 +25,9 @@
 //! - `Clone`을 구현하지 않아 암시적 복제를 방지합니다
 //! - `into_inner` 호출 시 원본 메모리도 소거됩니다
 //! - `Debug` 미구현으로 로깅 시 데이터 노출을 방지합니다
-//!
-//! # Authors
-//! Q. T. Felix
 
 use crate::barrier::{atomic_compiler_fence, black_box, compiler_barrier, memory_barrier};
-use crate::zeroize::Zeroize;
+use crate::zeroize::{Zeroable, Zeroize};
 use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
 
@@ -38,11 +35,17 @@ use core::{mem, ptr};
 ///
 /// 내부 데이터는 `Drop` 시 휘발성 쓰기와 배리어를 통해
 /// 안전하게 0으로 소거됩니다.
-pub struct Secret<T> {
+///
+/// # Security Note
+/// `T: Zeroable` 바운드가 all-zero 비트 패턴이 invalid value 인 타입
+/// (`NonZeroU32`, `Box` 등) 의 래핑을 컴파일타임에 차단하여, `Drop` 의
+/// 바이트 제로화가 validity invariant 위반이나 drop glue 의
+/// use-after-free 로 이어지는 것을 방지합니다.
+pub struct Secret<T: Zeroable> {
     inner: T,
 }
 
-impl<T> Secret<T> {
+impl<T: Zeroable> Secret<T> {
     /// 새로운 `Secret`을 생성합니다.
     ///
     /// # Arguments
@@ -68,7 +71,7 @@ impl<T> Secret<T> {
     }
 }
 
-impl<T: Copy> Secret<T> {
+impl<T: Copy + Zeroable> Secret<T> {
     /// 내부 데이터를 추출하고 원본 메모리를 소거합니다.
     ///
     /// 데이터를 복사한 후 원본 메모리를 안전하게 소거하고,
@@ -101,7 +104,7 @@ impl<T: Copy> Secret<T> {
     }
 }
 
-impl<T> Deref for Secret<T> {
+impl<T: Zeroable> Deref for Secret<T> {
     type Target = T;
 
     #[inline]
@@ -110,14 +113,14 @@ impl<T> Deref for Secret<T> {
     }
 }
 
-impl<T> DerefMut for Secret<T> {
+impl<T: Zeroable> DerefMut for Secret<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.expose_mut()
     }
 }
 
-impl<T> Drop for Secret<T> {
+impl<T: Zeroable> Drop for Secret<T> {
     #[inline]
     fn drop(&mut self) {
         compiler_barrier();
@@ -139,14 +142,14 @@ impl<T> Drop for Secret<T> {
     }
 }
 
-impl<T: Zeroize> Zeroize for Secret<T> {
+impl<T: Zeroize + Zeroable> Zeroize for Secret<T> {
     #[inline]
     fn zeroize(&mut self) {
         self.inner.zeroize();
     }
 }
 
-impl<T: Default> Default for Secret<T> {
+impl<T: Default + Zeroable> Default for Secret<T> {
     #[inline]
     fn default() -> Self {
         Self::new(T::default())

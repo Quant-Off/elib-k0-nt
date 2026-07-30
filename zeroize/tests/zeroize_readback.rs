@@ -1,5 +1,5 @@
 use core::mem::MaybeUninit;
-use zeroize::{Secret, Zeroize, zeroize_flat};
+use zeroize::{Secret, Zeroable, Zeroize, zeroize_flat};
 
 #[cfg_attr(miri, ignore)]
 #[test]
@@ -8,7 +8,7 @@ fn secret_array_zeroized_on_drop() {
     unsafe {
         storage.write(Secret::new([0xA5u8; 32]));
         let ptr = storage.assume_init_ref().expose().as_ptr();
-        let byte_len = core::mem::size_of::<[u8; 32]>();
+        let byte_len = size_of::<[u8; 32]>();
 
         let pre = core::slice::from_raw_parts(ptr, byte_len);
         assert!(
@@ -58,6 +58,8 @@ fn zeroize_flat_wipes_bytes() {
         c: u32,
     }
 
+    unsafe impl Zeroable for Blob {}
+
     let mut storage: MaybeUninit<Blob> = MaybeUninit::uninit();
     unsafe {
         storage.write(Blob {
@@ -66,7 +68,7 @@ fn zeroize_flat_wipes_bytes() {
             c: 0xCAFE_BABE,
         });
         let ptr = storage.as_ptr() as *const u8;
-        let byte_len = core::mem::size_of::<Blob>();
+        let byte_len = size_of::<Blob>();
 
         let pre = core::slice::from_raw_parts(ptr, byte_len);
         assert!(

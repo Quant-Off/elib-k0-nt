@@ -1,6 +1,6 @@
 use crate::field::Fq;
 use crate::ntt::{N, intt, ntt};
-use zeroize::Zeroize;
+use zeroize::{Zeroable, Zeroize};
 
 #[derive(Clone, Copy)]
 pub struct Poly {
@@ -13,6 +13,8 @@ impl Zeroize for Poly {
         self.coeffs.zeroize();
     }
 }
+
+unsafe impl Zeroable for Poly {}
 
 impl Poly {
     pub const fn new_zero() -> Self {
@@ -68,6 +70,8 @@ impl<const D: usize> Zeroize for PolyVec<D> {
         }
     }
 }
+
+unsafe impl<const D: usize> Zeroable for PolyVec<D> {}
 
 impl<const D: usize> PolyVec<D> {
     pub const fn new_zero() -> Self {

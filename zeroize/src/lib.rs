@@ -27,9 +27,6 @@
 //! # Security Note
 //! 이 크레이트는 소프트웨어 수준에서 달성 가능한 최대 보안을 제공합니다.
 //! 콜드 부트 공격 등 물리적 공격에 대해서는 하드웨어 수준의 보호가 필요합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![no_std]
 
@@ -39,4 +36,4 @@ pub mod volatile;
 mod zeroize;
 
 pub use secret::Secret;
-pub use zeroize::{Zeroize, zeroize_flat};
+pub use zeroize::{Zeroable, Zeroize, zeroize_flat};

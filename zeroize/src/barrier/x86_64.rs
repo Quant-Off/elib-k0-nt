@@ -2,9 +2,6 @@
 //!
 //! `mfence` 명령어와 인라인 어셈블리를 활용하여
 //! 메모리 연산의 순서와 가시성을 보장합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 use core::arch::asm;
 
@@ -41,8 +38,9 @@ pub fn atomic_compiler_fence() {
 
 /// 값을 최적화에서 숨깁니다.
 ///
-/// 값의 주소를 레지스터에 강제 로드하고 휘발성 읽기를 수행하여
-/// 컴파일러가 해당 값에 대한 연산을 최적화하지 못하도록 합니다.
+/// 값의 주소를 레지스터에 강제 로드하여 컴파일러가
+/// 해당 값에 대한 연산을 최적화하지 못하도록 한 뒤,
+/// 값을 소유권 이동으로 그대로 반환합니다.
 ///
 /// # Arguments
 /// - `value`: 최적화에서 숨길 값
@@ -54,6 +52,6 @@ pub fn black_box<T>(value: T) -> T {
             in("rax") &value,
             options(nostack, preserves_flags)
         );
-        core::ptr::read_volatile(&value as *const T)
     }
+    value
 }
