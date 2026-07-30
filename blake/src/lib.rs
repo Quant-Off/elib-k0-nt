@@ -39,9 +39,6 @@
 //! let out = blake2b_long(b"input", 80).unwrap();
 //! assert_eq!(out.as_slice().len(), 80);
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 
@@ -53,7 +50,8 @@ use zeroize::{Secret, Zeroize};
 pub use blake2b::Blake2b;
 pub use blake3::{Blake3, OUT_LEN as BLAKE3_OUT_LEN};
 
-pub use constant_time::{Choice, CtEqOps};
+pub use constant_time::Choice;
+pub use constant_time::traits::CtEqOps;
 
 /// 해시 연산 중 발생할 수 있는 에러 타입입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,23 +133,30 @@ impl Drop for SecureBuffer {
 /// 최종 결과가 `Choice(0)`이 되며, 어떤 분기 결과도 호출자에게 직접 누설
 /// 되지 않습니다.
 pub fn ct_eq_slice(a: &[u8], b: &[u8]) -> Choice {
-    let len_eq = CtEqOps::eq(&a.len(), &b.len());
+    let len_eq = CtEqOps::ct_eq(&a.len(), &b.len());
     // 두 슬라이스 길이는 공개 가정
     // `min` 산출의 비교가 공개 데이터 분기
     let min_len = a.len().min(b.len());
 
     let mut result = Choice::from_u8(1);
     for i in 0..min_len {
-        result &= CtEqOps::eq(&a[i], &b[i]);
+        result &= CtEqOps::ct_eq(&a[i], &b[i]);
     }
 
     // 길이가 다르면 len_eq == 0 으로 최종 결과 마스킹
     result & len_eq
 }
 
-impl CtEqOps for SecureBuffer {
+impl SecureBuffer {
+    /// 자신과 `other`의 유효 데이터가 같으면 `Choice(1)`을, 다르면 `Choice(0)`을
+    /// 반환하는 함수입니다.
+    ///
+    /// # Security Note
+    /// 비교는 `ct_eq_slice`에 위임되며 동일한 상수시간 보장과 길이 공개 가정을
+    /// 따릅니다.
+    #[must_use]
     #[inline]
-    fn eq(&self, other: &Self) -> Choice {
+    pub fn ct_eq(&self, other: &Self) -> Choice {
         ct_eq_slice(self.as_slice(), other.as_slice())
     }
 }
@@ -510,10 +515,10 @@ mod tests {
         let mut buf2 = SecureBuffer::new_owned(4).unwrap();
         buf2.as_mut_slice().copy_from_slice(&[1, 2, 3, 4]);
 
-        assert_eq!(CtEqOps::eq(&buf1, &buf2).unwrap_u8(), 1);
+        assert_eq!(buf1.ct_eq(&buf2).unwrap_u8(), 1);
 
         buf2.as_mut_slice()[3] = 5;
-        assert_eq!(CtEqOps::eq(&buf1, &buf2).unwrap_u8(), 0);
+        assert_eq!(buf1.ct_eq(&buf2).unwrap_u8(), 0);
     }
 
     /// Blake2b 인스턴스가 update 후 nonempty 상태에서 Drop 시

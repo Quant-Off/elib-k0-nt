@@ -9,7 +9,6 @@
 //!    UB 회귀 가드 역할 수행.
 
 use blake::{Blake2b, Blake3, MAX_OUTPUT_LEN, SecureBuffer, blake2b_long, ct_eq_slice};
-use constant_time::CtEqOps;
 
 //
 // ct_eq_slice: 길이 경계와 비대칭 입력 회귀
@@ -97,7 +96,7 @@ fn threat_secure_buffer_ct_eq_different_lengths() {
     let mut b = SecureBuffer::new_owned(16).unwrap();
     a.as_mut_slice().copy_from_slice(&[1; 8]);
     b.as_mut_slice().copy_from_slice(&[1; 16]);
-    assert_eq!(CtEqOps::eq(&a, &b).unwrap_u8(), 0);
+    assert_eq!(a.ct_eq(&b).unwrap_u8(), 0);
 }
 
 //

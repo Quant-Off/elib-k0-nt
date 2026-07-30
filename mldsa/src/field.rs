@@ -1,5 +1,6 @@
 use crate::{Q, Q_INV};
-use constant_time::{Choice, CtGreeter, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtGtOps, CtSelOps};
 use zeroize::Zeroize;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -52,7 +53,7 @@ impl Fq {
 #[inline(always)]
 pub fn fq_to_signed(v: i32) -> i32 {
     let half = Q / 2;
-    let is_greater = CtGreeter::gt(&v, &half);
+    let is_greater = CtGtOps::ct_gt(&v, &half);
     i32::select(&v, &(v - Q), is_greater)
 }
 

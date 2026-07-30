@@ -26,15 +26,13 @@
 //!
 //! assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 
 mod field;
 
-use constant_time::{Choice, CtEqOps};
+use constant_time::Choice;
+use constant_time::traits::CtEqOps;
 use field::FieldElement;
 use zeroize::{Secret, Zeroize};
 
@@ -259,7 +257,7 @@ pub fn is_contributory(shared: &SharedSecret) -> Choice {
     for b in shared.0.expose().iter() {
         acc |= *b;
     }
-    CtEqOps::ne(&acc, &0)
+    CtEqOps::ct_ne(&acc, &0)
 }
 
 #[cfg(test)]

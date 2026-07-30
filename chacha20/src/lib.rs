@@ -5,7 +5,8 @@ mod chacha20;
 mod poly1305;
 
 use chacha20::ChaCha20;
-use constant_time::{Choice, CtEqOps};
+use constant_time::Choice;
+use constant_time::traits::CtEqOps;
 use poly1305::{Poly1305, poly1305_verify};
 use zeroize::{Secret, Zeroize};
 
@@ -250,7 +251,7 @@ impl ChaCha20Poly1305 {
 pub fn verify_tag(computed: &[u8; 16], expected: &[u8; 16]) -> bool {
     let mut eq = Choice::from_u8(1);
     for i in 0..16 {
-        eq &= CtEqOps::eq(&computed[i], &expected[i]);
+        eq &= CtEqOps::ct_eq(&computed[i], &expected[i]);
     }
     eq.unwrap_u8() == 1
 }

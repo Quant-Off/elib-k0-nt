@@ -1,4 +1,5 @@
-use constant_time::{Choice, CtEqOps, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtSelOps};
 use zeroize::Zeroize;
 
 pub struct Poly1305 {
@@ -316,7 +317,7 @@ impl Drop for Poly1305 {
 pub fn poly1305_verify(tag1: &[u8; 16], tag2: &[u8; 16]) -> bool {
     let mut eq = Choice::from_u8(1);
     for i in 0..16 {
-        eq &= CtEqOps::eq(&tag1[i], &tag2[i]);
+        eq &= CtEqOps::ct_eq(&tag1[i], &tag2[i]);
     }
     eq.unwrap_u8() == 1
 }

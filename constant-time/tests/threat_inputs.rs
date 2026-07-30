@@ -11,7 +11,8 @@
 //! 본 스위트는 timing 검증이 아니므로 release 빌드 / debug 빌드 / MIRI 모두에서
 //! 동일한 결과를 산출해야 합니다.
 
-use constant_time::{Choice, CtEqOps, CtGreeter, CtLess, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtGtOps, CtLess, CtSelOps};
 
 //
 // Choice::from_u8: u8 전 256 값에 대한 정확성
@@ -53,7 +54,7 @@ fn threat_choice_bitops_invariant() {
 fn threat_eq_boundaries_unsigned() {
     let cases_u8: &[(u8, u8, u8)] = &[(0, 0, 1), (0xFF, 0xFF, 1), (0, 0xFF, 0), (0x7F, 0x80, 0)];
     for &(a, b, exp) in cases_u8 {
-        assert_eq!(CtEqOps::eq(&a, &b).unwrap_u8(), exp, "u8 {a}=={b}");
+        assert_eq!(CtEqOps::ct_eq(&a, &b).unwrap_u8(), exp, "u8 {a}=={b}");
     }
     let cases_u128: &[(u128, u128, u8)] = &[
         (0, 0, 1),
@@ -64,7 +65,7 @@ fn threat_eq_boundaries_unsigned() {
         (1u128 << 64, 1, 0),                 // high half 만 다름
     ];
     for &(a, b, exp) in cases_u128 {
-        assert_eq!(CtEqOps::eq(&a, &b).unwrap_u8(), exp, "u128 a/b");
+        assert_eq!(CtEqOps::ct_eq(&a, &b).unwrap_u8(), exp, "u128 a/b");
     }
 }
 
@@ -79,12 +80,12 @@ fn threat_eq_boundaries_signed() {
         (-1, -1, 1),
     ];
     for &(a, b, exp) in cases_i64 {
-        assert_eq!(CtEqOps::eq(&a, &b).unwrap_u8(), exp, "i64 {a}=={b}");
+        assert_eq!(CtEqOps::ct_eq(&a, &b).unwrap_u8(), exp, "i64 {a}=={b}");
     }
 }
 
 //
-// 경계값: CtGreeter 부호별 ordering 정확성
+// 경계값: CtGtOps 부호별 ordering 정확성
 //
 
 #[test]
@@ -97,7 +98,7 @@ fn threat_gt_boundaries_unsigned() {
         (1u64 << 63, (1u64 << 63) - 1, 1), // 최대 부호 비트 경계
     ];
     for &(a, b, exp) in cases_u64 {
-        assert_eq!(CtGreeter::gt(&a, &b).unwrap_u8(), exp, "u64 {a}>{b}");
+        assert_eq!(CtGtOps::ct_gt(&a, &b).unwrap_u8(), exp, "u64 {a}>{b}");
     }
     let cases_u128: &[(u128, u128, u8)] = &[
         (0, u128::MAX, 0),
@@ -107,7 +108,7 @@ fn threat_gt_boundaries_unsigned() {
         (1u128 << 64, (1u128 << 64) | 5, 0),
     ];
     for &(a, b, exp) in cases_u128 {
-        assert_eq!(CtGreeter::gt(&a, &b).unwrap_u8(), exp, "u128 gt");
+        assert_eq!(CtGtOps::ct_gt(&a, &b).unwrap_u8(), exp, "u128 gt");
     }
 }
 
@@ -122,7 +123,7 @@ fn threat_gt_boundaries_signed() {
         (i64::MAX, i64::MAX, 0),
     ];
     for &(a, b, exp) in cases_i64 {
-        assert_eq!(CtGreeter::gt(&a, &b).unwrap_u8(), exp, "i64 {a}>{b}");
+        assert_eq!(CtGtOps::ct_gt(&a, &b).unwrap_u8(), exp, "i64 {a}>{b}");
     }
     let cases_i128: &[(i128, i128, u8)] = &[
         (i128::MIN, i128::MAX, 0),
@@ -133,7 +134,7 @@ fn threat_gt_boundaries_signed() {
         (i128::MIN, -1, 0),
     ];
     for &(a, b, exp) in cases_i128 {
-        assert_eq!(CtGreeter::gt(&a, &b).unwrap_u8(), exp, "i128 gt");
+        assert_eq!(CtGtOps::ct_gt(&a, &b).unwrap_u8(), exp, "i128 gt");
     }
 }
 
@@ -146,9 +147,9 @@ fn threat_lt_consistency() {
     // a, b 모두에 대해 lt + eq + gt 의 합이 exactly 1 (3분할 보장)
     for a in 0u32..32 {
         for b in 0u32..32 {
-            let lt = CtLess::lt(&a, &b).unwrap_u8();
-            let eq = CtEqOps::eq(&a, &b).unwrap_u8();
-            let gt = CtGreeter::gt(&a, &b).unwrap_u8();
+            let lt = CtLess::ct_lt(&a, &b).unwrap_u8();
+            let eq = CtEqOps::ct_eq(&a, &b).unwrap_u8();
+            let gt = CtGtOps::ct_gt(&a, &b).unwrap_u8();
             assert_eq!(
                 lt + eq + gt,
                 1,
@@ -208,10 +209,10 @@ fn threat_extreme_hamming_weight() {
     ];
     for &a in patterns {
         for &b in patterns {
-            let eq = CtEqOps::eq(&a, &b).unwrap_u8();
+            let eq = CtEqOps::ct_eq(&a, &b).unwrap_u8();
             let exp_eq = (a == b) as u8;
             assert_eq!(eq, exp_eq, "eq HW 위반 a={a:#x} b={b:#x}");
-            let gt = CtGreeter::gt(&a, &b).unwrap_u8();
+            let gt = CtGtOps::ct_gt(&a, &b).unwrap_u8();
             let exp_gt = (a > b) as u8;
             assert_eq!(gt, exp_gt, "gt HW 위반 a={a:#x} b={b:#x}");
         }

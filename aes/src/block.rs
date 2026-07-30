@@ -1,7 +1,8 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::sbox::{inv_sub_bytes_block, sub_bytes_block};
-use constant_time::{Choice, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::*;
 use zeroize::Zeroize;
 
 const NB: usize = 4;

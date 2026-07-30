@@ -3,7 +3,8 @@
 use crate::Error;
 use crate::kpke;
 use crate::params::{N, Q, SHAREDSECRETBYTES, SYMBYTES};
-use constant_time::{Choice, CtEqOps, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtSelOps};
 use sha3::{SHA3, SHA3_256, SHA3_512, SHAKE256, XOF};
 use zeroize::Zeroize;
 
@@ -155,7 +156,7 @@ pub fn decaps<const K: usize>(
 
     let mut eq = Choice::from_u8(1);
     for i in 0..ct_len {
-        eq &= CtEqOps::eq(&ct[i], &ct_prime[i]);
+        eq &= CtEqOps::ct_eq(&ct[i], &ct_prime[i]);
     }
 
     let mut z_result = kdf(&ct[..ct_len], &z);

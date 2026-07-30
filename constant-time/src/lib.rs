@@ -2,7 +2,7 @@
 //!
 //! 비밀 값에 의존하는 분기나 데이터 의존 메모리 접근 없이 값 선택과 동등
 //! 비교, 대소 비교를 수행하는 `Choice` 타입과 `CtSelOps`, `CtEqOps`,
-//! `CtGreeter`, `CtLess` 트레이트를 제공합니다. 저수준 상수-시간 프리미티브는
+//! `CtGtOps`, `CtLess` 트레이트를 제공합니다. 저수준 상수-시간 프리미티브는
 //! `internal` 모듈에 있으며 x86_64와 aarch64에서는 인-라인 어셈블리로, 그 외
 //! 아키텍처에서는 `black_box` 기반 best-effort fallback으로 동작합니다.
 //!
@@ -10,25 +10,23 @@
 //! - `Choice`: 항상 0 또는 1 값을 갖는 상수-시간 bool이며 비트 연산으로 조합됩니다
 //! - `CtSelOps`: 조건에 따라 두 값 중 하나를 선택하고 대입과 교환을 파생합니다
 //! - `CtEqOps`: 두 값의 동등 여부를 상수-시간에 판정합니다
-//! - `CtGreeter`: 두 값의 대소를 상수-시간에 판정합니다
-//! - `CtLess`: `CtEqOps`와 `CtGreeter`를 만족하는 모든 타입에 자동으로 제공됩니다
+//! - `CtGtOps`: 두 값의 대소를 상수-시간에 판정합니다
+//! - `CtLess`: `CtEqOps`와 `CtGtOps`를 만족하는 모든 타입에 자동으로 제공됩니다
 //!
 //! # Examples
 //! ```rust,ignore
 //! let cond = Choice::from_u8(1);
 //! let selected = u32::select(&10, &20, cond);
-//! let equal = 7u32.eq(&7);
-//! let greater = 9u32.gt(&4);
+//! let equal = 7u32.ct_eq(&7);
+//! let greater = 9u32.ct_gt(&4);
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 #![cfg_attr(not(test), no_std)]
 
 mod internal;
+pub mod traits;
 
+use crate::private::Sealed;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
-use internal::*;
 
 //
 // Choice
@@ -68,7 +66,7 @@ impl Choice {
 }
 
 //
-// 비트 연산
+// Bits ops - start
 //
 // 피연산자가 0 또는 1이므로 `&`, `|`, `^`는 정규화 없이 불변을 보존합니다
 // `Not`은 1과의 XOR로 분기 없이 0과 1을 뒤집습니다
@@ -129,124 +127,12 @@ impl Not for Choice {
 }
 
 //
-// CtSelOps 트레이트 (select, assign, swap)
-//
-// select(a, b, choice)는 choice가 1이면 *b를, 0이면 *a를 반환하며
-// assign과 swap은 select에서 파생됩니다
-//
-// ct_sel(cond, x, y)가 cond가 0이 아닐 때 x를 반환하므로
-// select(a, b, c)는 ct_sel(c.0, *b, *a)와 같습니다
+// Bits ops - end
 //
 
-/// 조건에 따라 두 값 중 하나를 상수-시간에 선택하는 연산을 정의하는 트레이트입니다.
-///
-/// `assign`과 `swap`은 `select`에서 파생됩니다.
-pub trait CtSelOps: Copy + private::Sealed {
-    /// `choice`가 1이면 `b`를, 0이면 `a`를 상수-시간에 선택하여 반환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `a`: `choice`가 0일 때 선택되는 값입니다
-    /// - `b`: `choice`가 1일 때 선택되는 값입니다
-    /// - `choice`: 선택 조건입니다
-    fn select(a: &Self, b: &Self, choice: Choice) -> Self;
-
-    /// `choice`가 1이면 `other`를 자신에게 상수-시간에 대입하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `other`: 대입 후보 값입니다
-    /// - `choice`: 대입 조건입니다
-    #[inline]
-    fn assign(&mut self, other: &Self, choice: Choice) {
-        *self = Self::select(self, other, choice);
-    }
-
-    /// `choice`가 1이면 `a`와 `b`를 상수-시간에 교환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `a`: 교환 대상 첫 번째 값입니다
-    /// - `b`: 교환 대상 두 번째 값입니다
-    /// - `choice`: 교환 조건이며 0이면 두 값을 그대로 둡니다
-    ///
-    /// # Safety
-    /// 임시 변수 `t`는 `Self: Copy + Sized`이며 함수 로컬 스택 슬롯에만
-    /// 존재합니다. 각 바이트의 volatile write는 별칭 없는 유일 포인터로
-    /// 수행되므로 경합이 없고 `write_volatile`는 죽은 코드 제거 대상이
-    /// 아닙니다. 또한 `CtSelOps`는 `private::Sealed`로 봉인되어 구현자가
-    /// 고정폭 정수로 제한되므로 all-zero 비트 패턴이 항상 `Self`의 유효한
-    /// 값이며 volatile 0 덮어쓰기가 invalid value를 만들지 않습니다.
-    ///
-    /// # Security Note
-    /// 임시 변수 `t`는 `*a`의 평문 사본을 일시적으로 보유합니다. 함수 종료 시
-    /// `size_of::<Self>()` 바이트 전 영역을 volatile 0으로 덮어쓴 뒤
-    /// `compiler_fence(SeqCst)`로 store 재정렬을 차단하여 CWE-316 (cleartext
-    /// storage in memory) 잔재를 방지합니다. 추가로 `black_box(&mut t)`가 스택
-    /// 슬롯의 escape를 강제하여 최적화기가 임시 변수를 레지스터에만 유지하지
-    /// 못하도록 합니다.
-    #[inline]
-    fn swap(a: &mut Self, b: &mut Self, choice: Choice) {
-        let mut t: Self = *a;
-        let _ = core::hint::black_box(&mut t);
-        a.assign(b, choice);
-        b.assign(&t, choice);
-        // SAFETY: `t`는 함수 로컬 스택 슬롯의 유일 포인터이며 각 바이트의
-        //         volatile write는 별칭과 경합이 없고 죽은 코드 제거 대상이
-        //         아닙니다
-        let size = core::mem::size_of::<Self>();
-        let ptr = core::ptr::from_mut(&mut t).cast::<u8>();
-        for i in 0..size {
-            unsafe {
-                core::ptr::write_volatile(ptr.add(i), 0);
-            }
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-        let _ = core::hint::black_box(&mut t);
-    }
-}
-
-macro_rules! impl_sel_via32 {
-    ($($t:ty),+) => {
-        $(
-            impl CtSelOps for $t {
-                #[inline]
-                fn select(a: &Self, b: &Self, choice: Choice) -> Self {
-                    ct_sel32(choice.0, *b as u32, *a as u32) as $t
-                }
-            }
-        )+
-    };
-}
-
-macro_rules! impl_sel_via64 {
-    ($($t:ty),+) => {
-        $(
-            impl CtSelOps for $t {
-                #[inline]
-                fn select(a: &Self, b: &Self, choice: Choice) -> Self {
-                    ct_sel64(choice.0, *b as u64, *a as u64) as $t
-                }
-            }
-        )+
-    };
-}
-
-impl_sel_via32!(u8, u16, u32, i8, i16, i32);
-impl_sel_via64!(u64, i64, usize, isize);
-
-impl CtSelOps for u128 {
-    #[inline]
-    fn select(a: &Self, b: &Self, choice: Choice) -> Self {
-        let hi = ct_sel64(choice.0, (*b >> 64) as u64, (*a >> 64) as u64) as u128;
-        let lo = ct_sel64(choice.0, *b as u64, *a as u64) as u128;
-        (hi << 64) | lo
-    }
-}
-
-impl CtSelOps for i128 {
-    #[inline]
-    fn select(a: &Self, b: &Self, choice: Choice) -> Self {
-        u128::select(&(*a as u128), &(*b as u128), choice) as i128
-    }
-}
+//
+// Sealed - start
+//
 
 mod private {
     pub trait Sealed {}
@@ -264,193 +150,18 @@ impl_sealed!(
     u8, u16, u32, i8, i16, i32, u64, i64, usize, isize, u128, i128
 );
 
-//
-// CtEqOps 트레이트 (eq, ne)
-//
-// eq는 self와 other가 같으면 Choice(1)을, 아니면 Choice(0)을 반환하며
-// ne는 !eq로 파생됩니다
-//
-// 동등성은 부호와 무관하며 두 값의 비트 패턴이 같을 때만 같습니다. 부호 있는
-// 타입은 비교 전에 부호 확장으로 넓히는데 두 피연산자가 같은 확장을 거치므로
-// 결과가 정확합니다
-//
-
-/// 두 값의 동등 여부를 상수-시간에 판정하는 연산을 정의하는 트레이트입니다.
-pub trait CtEqOps {
-    /// 자신과 `other`가 같으면 `Choice(1)`을, 다르면 `Choice(0)`을 반환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `other`: 비교 대상 값입니다
-    fn eq(&self, other: &Self) -> Choice;
-
-    /// 자신과 `other`가 다르면 `Choice(1)`을, 같으면 `Choice(0)`을 반환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `other`: 비교 대상 값입니다
-    #[inline]
-    fn ne(&self, other: &Self) -> Choice {
-        !self.eq(other)
-    }
-}
-
-macro_rules! impl_eq_via32 {
-    ($($t:ty),+) => {
-        $(
-            impl CtEqOps for $t {
-                #[inline]
-                fn eq(&self, other: &Self) -> Choice {
-                    Choice(ct_eq32(*self as u32, *other as u32))
-                }
-            }
-        )+
-    };
-}
-
-macro_rules! impl_eq_via64 {
-    ($($t:ty),+) => {
-        $(
-            impl CtEqOps for $t {
-                #[inline]
-                fn eq(&self, other: &Self) -> Choice {
-                    Choice(ct_eq64(*self as u64, *other as u64))
-                }
-            }
-        )+
-    };
-}
-
-impl_eq_via32!(u8, u16, u32, i8, i16, i32);
-impl_eq_via64!(u64, i64, usize, isize);
-
-impl CtEqOps for u128 {
-    #[inline]
-    fn eq(&self, other: &Self) -> Choice {
-        Choice(ct_eq128(*self, *other))
-    }
-}
-
-impl CtEqOps for i128 {
-    #[inline]
-    fn eq(&self, other: &Self) -> Choice {
-        Choice(ct_eq128(*self as u128, *other as u128))
-    }
-}
+impl<T: Sealed, const N: usize> Sealed for [T; N] {}
 
 //
-// CtGreeter 트레이트 (gt)
-//
-// gt는 self가 other보다 크면 Choice(1)을, 아니면 Choice(0)을 반환합니다
-//
-// 부호 없는 타입은 32비트 또는 64비트로 영 확장합니다
-// 부호 있는 타입은 i64로 부호 확장하는데 2의 보수 부호 확장이 각 타입 범위
-// 안에서 단조이므로 순서가 보존됩니다
+// Sealed - end
 //
 
-/// 두 값의 대소를 상수-시간에 판정하는 연산을 정의하는 트레이트입니다.
-pub trait CtGreeter {
-    /// 자신이 `other`보다 크면 `Choice(1)`을, 아니면 `Choice(0)`을 반환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `other`: 비교 대상 값입니다
-    fn gt(&self, other: &Self) -> Choice;
-}
-
-macro_rules! impl_gt_unsigned_via32 {
-    ($($t:ty),+) => {
-        $(
-            impl CtGreeter for $t {
-                #[inline]
-                fn gt(&self, other: &Self) -> Choice {
-                    Choice(ct_gt_u32(*self as u32, *other as u32))
-                }
-            }
-        )+
-    };
-}
-
-macro_rules! impl_gt_unsigned_via64 {
-    ($($t:ty),+) => {
-        $(
-            impl CtGreeter for $t {
-                #[inline]
-                fn gt(&self, other: &Self) -> Choice {
-                    Choice(ct_gt_u64(*self as u64, *other as u64))
-                }
-            }
-        )+
-    };
-}
-
-// 부호 있는 타입은 ct_gt_i64 호출 전에 i64로 부호 확장합니다
-// i8 as i64, i16 as i64, i32 as i64는 모두 부호 확장을 수행합니다
-// 64비트 플랫폼에서는 isize가 i64와 같으므로 캐스팅에 손실이 없습니다
-macro_rules! impl_gt_signed_via64 {
-    ($($t:ty),+) => {
-        $(
-            impl CtGreeter for $t {
-                #[inline]
-                fn gt(&self, other: &Self) -> Choice {
-                    Choice(ct_gt_i64(*self as i64, *other as i64))
-                }
-            }
-        )+
-    };
-}
-
-impl_gt_unsigned_via32!(u8, u16, u32);
-impl_gt_unsigned_via64!(u64, usize);
-impl_gt_signed_via64!(i8, i16, i32, i64, isize);
-
-impl CtGreeter for u128 {
-    #[inline]
-    fn gt(&self, other: &Self) -> Choice {
-        Choice(ct_gt_u128(*self, *other))
-    }
-}
-
-impl CtGreeter for i128 {
-    #[inline]
-    fn gt(&self, other: &Self) -> Choice {
-        Choice(ct_gt_i128(*self, *other))
-    }
-}
-
-//
-// CtLess 트레이트 (lt)
-//
-// lt는 gt와 eq에서 파생됩니다
-// a가 b보다 작은 것은 a가 b보다 크지 않고 a와 b가 같지도 않은 것과 같으며
-// 결국 a가 b 이상이 아닌 것과 같습니다
-//
-// 두 연산 모두 상수-시간이므로 그 조합도 상수-시간입니다
-//
-
-/// 두 값의 작음 여부를 상수-시간에 판정하는 연산을 정의하는 트레이트입니다.
-///
-/// `CtEqOps`와 `CtGreeter`의 결과를 결합하여 기본 구현을 파생합니다.
-pub trait CtLess: CtEqOps + CtGreeter {
-    /// 자신이 `other`보다 작으면 `Choice(1)`을, 아니면 `Choice(0)`을 반환하는 함수입니다.
-    ///
-    /// # Arguments
-    /// - `other`: 비교 대상 값입니다
-    #[inline]
-    fn lt(&self, other: &Self) -> Choice {
-        !self.gt(other) & !self.eq(other)
-    }
-}
-
-// 일괄 구현으로 CtEqOps와 CtGreeter를 모두 만족하는 타입은 검증된 상수-시간
-// 기본 구현으로 CtLess를 자동으로 얻습니다.
-impl<T: CtEqOps + CtGreeter> CtLess for T {}
-
-//
-// 계층-1 결정적 값 동등성 테스트 (CTSEC-01, CONTEXT D-03)
-//
-// 값 동등성만 증명하며 분기 부재는 계층-2 디스어셈블 게이트(check_ct_asm.sh) 소관입니다.
-//
+/// 결정적 값 동등성 테스트 모듈입니다.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::traits::*;
+    use zeroize::Secret;
 
     const U32_SAMPLES: [u32; 8] = [
         0,
@@ -545,17 +256,78 @@ mod tests {
     }
 
     #[test]
+    fn ct_eq_array_and_secret_delegation() {
+        let base = [0x5Au8; 32];
+        let same = [0x5Au8; 32];
+        assert_eq!(
+            base.ct_eq(&same).unwrap_u8(),
+            1,
+            "[u8; 32] 동일 배열 ct_eq 불일치"
+        );
+
+        let mut first_diff = base;
+        first_diff[0] ^= 0x80;
+        assert_eq!(
+            base.ct_eq(&first_diff).unwrap_u8(),
+            0,
+            "[u8; 32] 첫 원소 차이 미검출"
+        );
+
+        let mut last_diff = base;
+        last_diff[31] ^= 1;
+        assert_eq!(
+            base.ct_eq(&last_diff).unwrap_u8(),
+            0,
+            "[u8; 32] 마지막 원소 차이 미검출"
+        );
+
+        let words = [0xDEAD_BEEFu32; 8];
+        assert_eq!(
+            words.ct_eq(&[0xDEAD_BEEFu32; 8]).unwrap_u8(),
+            1,
+            "[u32; 8] 동일 배열 ct_eq 불일치"
+        );
+
+        let s1 = Secret::new(base);
+        let s2 = Secret::new(same);
+        let s3 = Secret::new(last_diff);
+        assert_eq!(
+            s1.ct_eq(&s2).unwrap_u8(),
+            1,
+            "Secret<[u8; 32]> 동일 키 ct_eq 불일치"
+        );
+        assert_eq!(
+            s1.ct_eq(&s3).unwrap_u8(),
+            0,
+            "Secret<[u8; 32]> 상이 키 미검출"
+        );
+        assert_eq!(
+            s1.ct_ne(&s3).unwrap_u8(),
+            1,
+            "Secret<[u8; 32]> ct_ne 파생 불일치"
+        );
+
+        let a = Secret::new(0x0123_4567_89AB_CDEFu64);
+        let b = Secret::new(0x0123_4567_89AB_CDEFu64);
+        assert_eq!(
+            a.ct_eq(&b).unwrap_u8(),
+            1,
+            "Secret<u64> 동일 값 ct_eq 불일치"
+        );
+    }
+
+    #[test]
     fn ct_eq_value_matches_branchful() {
         // u8 전수 (256 x 256)
         for a in 0u8..=255 {
             for b in 0u8..=255 {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "CtEqOps::eq u8 불일치: {a} == {b}"
                 );
                 assert_eq!(
-                    CtEqOps::ne(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_ne(&a, &b).unwrap_u8(),
                     (a != b) as u8,
                     "CtEqOps::ne u8 불일치: {a} != {b}"
                 );
@@ -565,12 +337,12 @@ mod tests {
         for &a in &U32_SAMPLES {
             for &b in &U32_SAMPLES {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "eq u32 불일치"
                 );
                 assert_eq!(
-                    CtEqOps::ne(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_ne(&a, &b).unwrap_u8(),
                     (a != b) as u8,
                     "ne u32 불일치"
                 );
@@ -579,7 +351,7 @@ mod tests {
         for &a in &U64_SAMPLES {
             for &b in &U64_SAMPLES {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "eq u64 불일치"
                 );
@@ -588,7 +360,7 @@ mod tests {
         for &a in &U128_SAMPLES {
             for &b in &U128_SAMPLES {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "eq u128 불일치"
                 );
@@ -597,7 +369,7 @@ mod tests {
         for &a in &I64_SAMPLES {
             for &b in &I64_SAMPLES {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "eq i64 불일치"
                 );
@@ -606,7 +378,7 @@ mod tests {
         for &a in &I128_SAMPLES {
             for &b in &I128_SAMPLES {
                 assert_eq!(
-                    CtEqOps::eq(&a, &b).unwrap_u8(),
+                    CtEqOps::ct_eq(&a, &b).unwrap_u8(),
                     (a == b) as u8,
                     "eq i128 불일치"
                 );
@@ -644,12 +416,12 @@ mod tests {
         for &a in &U32_SAMPLES {
             for &b in &U32_SAMPLES {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt u32 불일치: {a} > {b}"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt u32 불일치: {a} < {b}"
                 );
@@ -658,12 +430,12 @@ mod tests {
         for &a in &U64_SAMPLES {
             for &b in &U64_SAMPLES {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt u64 불일치"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt u64 불일치"
                 );
@@ -672,12 +444,12 @@ mod tests {
         for &a in &I64_SAMPLES {
             for &b in &I64_SAMPLES {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt i64 불일치: {a} > {b}"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt i64 불일치: {a} < {b}"
                 );
@@ -686,12 +458,12 @@ mod tests {
         for &a in &U128_SAMPLES {
             for &b in &U128_SAMPLES {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt u128 불일치"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt u128 불일치"
                 );
@@ -700,12 +472,12 @@ mod tests {
         for &a in &I128_SAMPLES {
             for &b in &I128_SAMPLES {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt i128 불일치: {a} > {b}"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt i128 불일치: {a} < {b}"
                 );
@@ -715,12 +487,12 @@ mod tests {
         for a in i8::MIN..=i8::MAX {
             for b in i8::MIN..=i8::MAX {
                 assert_eq!(
-                    CtGreeter::gt(&a, &b).unwrap_u8(),
+                    CtGtOps::ct_gt(&a, &b).unwrap_u8(),
                     (a > b) as u8,
                     "gt i8 전수 불일치"
                 );
                 assert_eq!(
-                    CtLess::lt(&a, &b).unwrap_u8(),
+                    CtLess::ct_lt(&a, &b).unwrap_u8(),
                     (a < b) as u8,
                     "lt i8 전수 불일치"
                 );

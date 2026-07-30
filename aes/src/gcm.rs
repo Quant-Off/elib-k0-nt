@@ -1,6 +1,7 @@
 use crate::ghash::GHash;
 use crate::{AES256, Error};
-use constant_time::{Choice, CtEqOps};
+use constant_time::Choice;
+use constant_time::traits::CtEqOps;
 use zeroize::{Secret, Zeroize};
 
 pub const GCM_TAG_SIZE: usize = 16;
@@ -205,7 +206,7 @@ impl AES256GCM {
 
         let mut eq = Choice::from_u8(1);
         for (given, expected) in tag.iter().zip(expected_tag.iter()) {
-            eq &= CtEqOps::eq(given, expected);
+            eq &= CtEqOps::ct_eq(given, expected);
         }
         let authentic = eq.unwrap_u8() == 1;
         expected_tag.zeroize();

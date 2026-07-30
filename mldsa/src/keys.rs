@@ -8,7 +8,8 @@ use crate::pack::{
 };
 use crate::poly::PolyVec;
 use crate::sample::{expand_a, expand_s};
-use constant_time::{Choice, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::CtSelOps;
 use sha3::{SHAKE256, XOF};
 use zeroize::{Secret, Zeroize};
 

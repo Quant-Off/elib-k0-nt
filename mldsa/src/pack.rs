@@ -2,7 +2,8 @@ use crate::Q;
 use crate::field::{Fq, signed_to_fq};
 use crate::ntt::N;
 use crate::poly::{Poly, PolyVec};
-use constant_time::{Choice, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::CtSelOps;
 
 #[inline(always)]
 pub fn bitlen(n: u32) -> usize {

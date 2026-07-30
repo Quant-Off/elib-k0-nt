@@ -12,9 +12,9 @@ This crate provides integer operations that work without branching on secret val
 
 - `Choice`: A constant-time bool that always holds 0 or 1. Bitwise operations `&`, `|`, `^`, `!` preserve the 0/1 invariant without normalization. `Debug` is intentionally not derived to prevent sensitive value leakage (CWE-532).
 - `CtSelOps`: Conditional select (`select`), conditional assign (`assign`), conditional swap (`swap`).
-- `CtEqOps`: Equality comparison (`eq`, `ne`).
-- `CtGreeter`: Greater-than comparison (`gt`).
-- `CtLess`: Less-than comparison (`lt`). Automatically provided as `!gt & !eq` for any type satisfying `CtEqOps + CtGreeter`.
+- `CtEqOps`: Equality comparison (`ct_eq`, `ct_ne`).
+- `CtGtOps`: Greater-than comparison (`ct_gt`).
+- `CtLess`: Less-than comparison (`ct_lt`). Automatically provided as `!ct_gt & !ct_eq` for any type satisfying `CtEqOps + CtGtOps`.
 
 The four traits are implemented for fixed-width integers from `u8` through `i128`, and are sealed so that external types cannot be inserted. Each implementation delegates to low-level primitives in the `internal` module.
 
@@ -47,7 +47,7 @@ All asm blocks take operands exclusively in registers and specify `options(nomem
 
 ### 3. Choice 0/1 Invariant
 
-`Choice` is normalized to 0/1 without branching via the mask `(v | v.wrapping_neg()) >> 7`, and bitwise operations preserve this invariant. As a result, higher-level compositions such as `lt = !gt & !eq` also remain branch-free.
+`Choice` is normalized to 0/1 without branching via the mask `(v | v.wrapping_neg()) >> 7`, and bitwise operations preserve this invariant. As a result, higher-level compositions such as `lt = !ct_gt & !ct_eq` also remain branch-free.
 
 Additionally, architectures without verified inline assembly are rejected at compile time via a compile gate (`compile_error!`), preventing a best-effort `black_box` fallback from silently mixing into high-security builds (see the "Issues Found and Mitigations" section below). The zeroing loop in `swap` has a termination condition equal to the compile-time constant `size_of::<Self>()`, so that branch does not depend on any secret.
 

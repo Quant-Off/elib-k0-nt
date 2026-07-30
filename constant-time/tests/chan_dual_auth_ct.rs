@@ -9,7 +9,8 @@
 
 #[cfg(test)]
 mod tests {
-    use constant_time::{Choice, CtEqOps};
+    use constant_time::Choice;
+    use constant_time::traits::CtEqOps;
     use std::hint::black_box;
 
     // Mock HsmCapability  iso-light-k0::hsm_registry::HsmCapability 의 16-byte 레이아웃 미러
@@ -37,13 +38,13 @@ mod tests {
     //   token_nonzero & state_ok & token_eq & stored_rights_ok & cap_rights_ok
     #[inline(never)]
     fn authenticate_ct(cap: &MockCap, slot: &MockSlot, required: u16) -> bool {
-        let token_nonzero: Choice = CtEqOps::ne(&cap.token, &0u64);
-        let state_ok: Choice = CtEqOps::eq(&slot.state_byte, &1u8);
-        let token_eq: Choice = CtEqOps::eq(&cap.token, &slot.token);
+        let token_nonzero: Choice = CtEqOps::ct_ne(&cap.token, &0u64);
+        let state_ok: Choice = CtEqOps::ct_eq(&slot.state_byte, &1u8);
+        let token_eq: Choice = CtEqOps::ct_eq(&cap.token, &slot.token);
         let stored_masked: u16 = slot.rights & required;
-        let stored_rights_ok: Choice = CtEqOps::eq(&stored_masked, &required);
+        let stored_rights_ok: Choice = CtEqOps::ct_eq(&stored_masked, &required);
         let cap_masked: u16 = cap.rights & required;
-        let cap_rights_ok: Choice = CtEqOps::eq(&cap_masked, &required);
+        let cap_rights_ok: Choice = CtEqOps::ct_eq(&cap_masked, &required);
         (token_nonzero & state_ok & token_eq & stored_rights_ok & cap_rights_ok).unwrap_u8() == 1
     }
 

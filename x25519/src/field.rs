@@ -4,7 +4,8 @@
     clippy::needless_range_loop
 )]
 
-use constant_time::{Choice, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::CtSelOps;
 use core::ops::{Add, Mul, Sub};
 use zeroize::Zeroize;
 

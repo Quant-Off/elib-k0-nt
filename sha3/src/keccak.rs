@@ -1,5 +1,6 @@
 use crate::{Digest, KeccakState, MAX_RATE_BYTES};
-use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtGtOps, CtSelOps};
 use zeroize::barrier::{atomic_compiler_fence, memory_barrier};
 use zeroize::volatile::volatile_write;
 use zeroize::{Secret, Zeroize};
@@ -132,7 +133,7 @@ impl KeccakState {
             //   select(a, b, choice) → choice==1일 때 b, choice==0일 때 a
             //   is_ge==1 (remain >= fill) → fill   (현재 블록 완료)
             //   is_ge==0 (remain <  fill) → remain (남은 것을 가져옴)
-            let is_ge: Choice = CtGreeter::gt(&remain, &fill) | CtEqOps::eq(&remain, &fill);
+            let is_ge: Choice = CtGtOps::ct_gt(&remain, &fill) | CtEqOps::ct_eq(&remain, &fill);
             let chunk_len: usize = usize::select(&remain, &fill, is_ge);
 
             self.buffer[self.buffer_len..self.buffer_len + chunk_len]
@@ -210,7 +211,8 @@ impl KeccakState {
                 word_bytes = self.state[word_idx].to_le_bytes();
                 let remain: usize = output_len - pos;
                 // CT take = min(remain, 8)
-                let is_ge: Choice = CtGreeter::gt(&remain, &8usize) | CtEqOps::eq(&remain, &8usize);
+                let is_ge: Choice =
+                    CtGtOps::ct_gt(&remain, &8usize) | CtEqOps::ct_eq(&remain, &8usize);
                 let take: usize = usize::select(&remain, &8usize, is_ge);
                 out[pos..pos + take].copy_from_slice(&word_bytes[..take]);
                 pos += take;

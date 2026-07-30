@@ -22,7 +22,8 @@
 
 #[cfg(test)]
 mod tests {
-    use constant_time::{Choice, CtEqOps, CtGreeter, CtLess, CtSelOps};
+    use constant_time::Choice;
+    use constant_time::traits::{CtEqOps, CtGtOps, CtLess, CtSelOps};
     use std::hint::black_box;
 
     //
@@ -324,13 +325,13 @@ mod tests {
 
             for _ in 0..WARMUP {
                 let a = rnd_i32(&mut s);
-                black_box(CtEqOps::eq(&a, &a));
+                black_box(CtEqOps::ct_eq(&a, &a));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
                 let a = black_box(rnd_i32(&mut s));
                 let b = black_box(if cl == 0 { a } else { a ^ 1 });
-                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+                stat[cl].push(measure!(CtEqOps::ct_eq(&a, &b)));
             }
             if report("CtEqOps::eq<i32>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
                 return;
@@ -349,13 +350,13 @@ mod tests {
 
             for _ in 0..WARMUP {
                 let a = rnd_u64(&mut s);
-                black_box(CtEqOps::eq(&a, &a));
+                black_box(CtEqOps::ct_eq(&a, &a));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
                 let a = black_box(rnd_u64(&mut s));
                 let b = black_box(if cl == 0 { a } else { a ^ 1 });
-                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+                stat[cl].push(measure!(CtEqOps::ct_eq(&a, &b)));
             }
             if report("CtEqOps::eq<u64>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
                 return;
@@ -365,7 +366,7 @@ mod tests {
     }
 
     //
-    // CtGreeter::gt<u64> — unsigned 64-bit greater-than.
+    // CtGtOps::gt<u64> — unsigned 64-bit greater-than.
     //
     //   Class 0: a > b  — achieved by setting MSB of `a` and clearing it in `b`.
     //   Class 1: a < b  — roles reversed.
@@ -383,7 +384,7 @@ mod tests {
             for _ in 0..WARMUP {
                 let raw = rnd_u64(&mut s);
                 let (a, b) = (raw | MSB, raw & !MSB);
-                black_box(CtGreeter::gt(&a, &b));
+                black_box(CtGtOps::ct_gt(&a, &b));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
@@ -393,9 +394,9 @@ mod tests {
                 } else {
                     (raw & !MSB, raw | MSB) // a < b
                 };
-                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+                stat[cl].push(measure!(CtGtOps::ct_gt(&a, &b)));
             }
-            if report("CtGreeter::gt<u64>  (a>b vs a<b)", &stat[0], &stat[1]) {
+            if report("CtGtOps::gt<u64>  (a>b vs a<b)", &stat[0], &stat[1]) {
                 return;
             }
         }
@@ -403,7 +404,7 @@ mod tests {
     }
 
     //
-    // CtGreeter::gt<i64> — signed 64-bit greater-than.
+    // CtGtOps::gt<i64> — signed 64-bit greater-than.
     //
     //   Class 0: a > b  — a is non-negative (MSB clear),  b is negative (MSB set).
     //   Class 1: a < b  — roles reversed.
@@ -421,7 +422,7 @@ mod tests {
             for _ in 0..WARMUP {
                 let raw = rnd_u64(&mut s);
                 let (a, b) = ((raw & !SIGN) as i64, (raw | SIGN) as i64);
-                black_box(CtGreeter::gt(&a, &b));
+                black_box(CtGtOps::ct_gt(&a, &b));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
@@ -431,9 +432,9 @@ mod tests {
                 } else {
                     ((raw | SIGN) as i64, (raw & !SIGN) as i64) // a < 0 ≤ b (signed)
                 };
-                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+                stat[cl].push(measure!(CtGtOps::ct_gt(&a, &b)));
             }
-            if report("CtGreeter::gt<i64>  (a>b vs a<b)", &stat[0], &stat[1]) {
+            if report("CtGtOps::gt<i64>  (a>b vs a<b)", &stat[0], &stat[1]) {
                 return;
             }
         }
@@ -441,7 +442,7 @@ mod tests {
     }
 
     //
-    // CtGreeter::gt<u128> — 128-bit unsigned greater-than.
+    // CtGtOps::gt<u128> — 128-bit unsigned greater-than.
     //
     //   Class 0: a > b  — high 64-bit word of `a` is all-ones; `b` is all-zeros.
     //   Class 1: a < b  — roles reversed.
@@ -457,7 +458,7 @@ mod tests {
             for _ in 0..WARMUP {
                 let lo = rnd_u64(&mut s) as u128;
                 let (a, b) = ((u64::MAX as u128) << 64 | lo, lo);
-                black_box(CtGreeter::gt(&a, &b));
+                black_box(CtGtOps::ct_gt(&a, &b));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
@@ -467,9 +468,9 @@ mod tests {
                 } else {
                     (lo, (u64::MAX as u128) << 64 | lo) // a < b
                 };
-                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+                stat[cl].push(measure!(CtGtOps::ct_gt(&a, &b)));
             }
-            if report("CtGreeter::gt<u128>  (a>b vs a<b)", &stat[0], &stat[1]) {
+            if report("CtGtOps::gt<u128>  (a>b vs a<b)", &stat[0], &stat[1]) {
                 return;
             }
         }
@@ -491,7 +492,7 @@ mod tests {
 
             for _ in 0..WARMUP {
                 let raw = rnd_u32(&mut s);
-                black_box(CtLess::lt(&(raw & !MSB), &(raw | MSB)));
+                black_box(CtLess::ct_lt(&(raw & !MSB), &(raw | MSB)));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
@@ -501,7 +502,7 @@ mod tests {
                 } else {
                     (raw | MSB, raw & !MSB) // a > b
                 };
-                stat[cl].push(measure!(CtLess::lt(&a, &b)));
+                stat[cl].push(measure!(CtLess::ct_lt(&a, &b)));
             }
             if report("CtLess::lt<u32>  (a<b vs a>b)", &stat[0], &stat[1]) {
                 return;
@@ -598,13 +599,13 @@ mod tests {
             let mut stat = [Stats::default(), Stats::default()];
             for _ in 0..WARMUP {
                 let a = rnd_u32(&mut s);
-                black_box(CtEqOps::eq(&a, &a));
+                black_box(CtEqOps::ct_eq(&a, &a));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
                 let a = black_box(rnd_u32(&mut s));
                 let b = black_box(if cl == 0 { a } else { a ^ 1 });
-                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+                stat[cl].push(measure!(CtEqOps::ct_eq(&a, &b)));
             }
             if report("CtEqOps::eq<u32>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
                 return;
@@ -621,13 +622,13 @@ mod tests {
             let mut stat = [Stats::default(), Stats::default()];
             for _ in 0..WARMUP {
                 let a = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
-                black_box(CtEqOps::eq(&a, &a));
+                black_box(CtEqOps::ct_eq(&a, &a));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
                 let a = black_box(((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128);
                 let b = black_box(if cl == 0 { a } else { a ^ 1 });
-                stat[cl].push(measure!(CtEqOps::eq(&a, &b)));
+                stat[cl].push(measure!(CtEqOps::ct_eq(&a, &b)));
             }
             if report("CtEqOps::eq<u128>  (a==a vs a!=a^1)", &stat[0], &stat[1]) {
                 return;
@@ -651,7 +652,7 @@ mod tests {
             for _ in 0..WARMUP {
                 let raw = ((rnd_u64(&mut s) as u128) << 64) | rnd_u64(&mut s) as u128;
                 let (a, b) = ((raw & !SIGN128) as i128, (raw | SIGN128) as i128);
-                black_box(CtGreeter::gt(&a, &b));
+                black_box(CtGtOps::ct_gt(&a, &b));
             }
             for i in 0..MEASUREMENTS {
                 let cl = i & 1;
@@ -661,9 +662,9 @@ mod tests {
                 } else {
                     ((raw | SIGN128) as i128, (raw & !SIGN128) as i128)
                 };
-                stat[cl].push(measure!(CtGreeter::gt(&a, &b)));
+                stat[cl].push(measure!(CtGtOps::ct_gt(&a, &b)));
             }
-            if report("CtGreeter::gt<i128>  (a>b vs a<b)", &stat[0], &stat[1]) {
+            if report("CtGtOps::gt<i128>  (a>b vs a<b)", &stat[0], &stat[1]) {
                 return;
             }
         }

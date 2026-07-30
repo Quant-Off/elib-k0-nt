@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use constant_time::CtEqOps;
+    use constant_time::traits::CtEqOps;
 
     const WIRE_FRAME_MAX: usize = 4096;
     const WIRE_PAYLOAD_MAX: usize = WIRE_FRAME_MAX - 16;
@@ -37,8 +37,8 @@ mod tests {
         // Tier 2 4 invariant  CT-friendly  단일 collapse
         let magic_u32 = u32::from_le_bytes(magic);
         let wire_magic_u32 = u32::from_le_bytes(WIRE_MAGIC);
-        let magic_ok = CtEqOps::eq(&magic_u32, &wire_magic_u32).unwrap_u8() == 1;
-        let version_ok = CtEqOps::eq(&version, &WIRE_VERSION).unwrap_u8() == 1;
+        let magic_ok = CtEqOps::ct_eq(&magic_u32, &wire_magic_u32).unwrap_u8() == 1;
+        let version_ok = CtEqOps::ct_eq(&version, &WIRE_VERSION).unwrap_u8() == 1;
         let len_ok =
             (payload_len as usize) + 16 <= data.len() && (payload_len as usize) <= WIRE_PAYLOAD_MAX;
         let cmd_is_request = (cmd & WIRE_CMD_RESPONSE_BIT) == 0 && cmd != CMD_ERROR;

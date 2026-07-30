@@ -7,10 +7,13 @@
 //! 강제 방출하여, release 빌드 산출물의 어셈블리에서 조건분기 명령(x86_64 `jcc`, aarch64
 //! `b.cc/cbnz/cbz/tbnz/tbz`)부재를 grep 으로 검증 가능하게 합니다. swap probe는 추가로
 //! volatile zero store가 살아남는지(CWE-316 회귀 방지)도 함께 검사하도록 설계됩니다.
+//! 배열 eq probe는 컴파일타임 상수 종료조건 루프의 back-edge 분기 1건까지만 허용하고
+//! memcmp/bcmp 치환 부재를 함께 검사하도록 설계됩니다.
 //!
 //! main 함수는 DCE 방지용 호출만 수행합니다.
 
-use constant_time::{Choice, CtEqOps, CtGreeter, CtLess, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtGtOps, CtLess, CtSelOps};
 
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -51,55 +54,61 @@ pub extern "C" fn probe_sel_u128(c: u8, a: u128, b: u128) -> u128 {
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_eq_u32(a: u32, b: u32) -> u8 {
-    CtEqOps::eq(&a, &b).unwrap_u8()
+    CtEqOps::ct_eq(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_eq_u64(a: u64, b: u64) -> u8 {
-    CtEqOps::eq(&a, &b).unwrap_u8()
+    CtEqOps::ct_eq(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_eq_u128(a: u128, b: u128) -> u8 {
-    CtEqOps::eq(&a, &b).unwrap_u8()
+    CtEqOps::ct_eq(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_gt_u32(a: u32, b: u32) -> u8 {
-    CtGreeter::gt(&a, &b).unwrap_u8()
+    CtGtOps::ct_gt(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_gt_u64(a: u64, b: u64) -> u8 {
-    CtGreeter::gt(&a, &b).unwrap_u8()
+    CtGtOps::ct_gt(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_gt_i64(a: i64, b: i64) -> u8 {
-    CtGreeter::gt(&a, &b).unwrap_u8()
+    CtGtOps::ct_gt(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_gt_u128(a: u128, b: u128) -> u8 {
-    CtGreeter::gt(&a, &b).unwrap_u8()
+    CtGtOps::ct_gt(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_gt_i128(a: i128, b: i128) -> u8 {
-    CtGreeter::gt(&a, &b).unwrap_u8()
+    CtGtOps::ct_gt(&a, &b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn probe_lt_u32(a: u32, b: u32) -> u8 {
-    CtLess::lt(&a, &b).unwrap_u8()
+    CtLess::ct_lt(&a, &b).unwrap_u8()
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn probe_eq_arr_u8_32(a: &[u8; 32], b: &[u8; 32]) -> u8 {
+    CtEqOps::ct_eq(a, b).unwrap_u8()
 }
 
 #[unsafe(no_mangle)]
@@ -131,6 +140,10 @@ fn main() {
     black_box(probe_gt_u128(black_box(2), black_box(1)));
     black_box(probe_gt_i128(black_box(2), black_box(-1)));
     black_box(probe_lt_u32(black_box(1), black_box(2)));
+    black_box(probe_eq_arr_u8_32(
+        black_box(&[0x5Au8; 32]),
+        black_box(&[0x5Au8; 32]),
+    ));
     let (mut a, mut b) = (1u64, 2u64);
     probe_swap_u64(&mut a, &mut b, 1);
     black_box((a, b));

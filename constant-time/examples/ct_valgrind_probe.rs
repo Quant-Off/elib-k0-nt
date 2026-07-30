@@ -14,7 +14,8 @@
 //! 호스트 한정: Linux x86_64 (또는 macOS/Apple Silicon의 linux/amd64
 //! Docker 컨테이너)
 
-use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtGtOps, CtSelOps};
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut u8;
@@ -39,42 +40,42 @@ fn main() {
         // ct_eq32: 양 operand가 uninit
         let pa: *mut u32 = alloc_secret();
         let pb: *mut u32 = alloc_secret();
-        let _ = core::hint::black_box(CtEqOps::eq(&*pa, &*pb));
+        let _ = core::hint::black_box(CtEqOps::ct_eq(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
         // ct_eq64
         let pa: *mut u64 = alloc_secret();
         let pb: *mut u64 = alloc_secret();
-        let _ = core::hint::black_box(CtEqOps::eq(&*pa, &*pb));
+        let _ = core::hint::black_box(CtEqOps::ct_eq(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
         // ct_eq128
         let pa: *mut u128 = alloc_secret();
         let pb: *mut u128 = alloc_secret();
-        let _ = core::hint::black_box(CtEqOps::eq(&*pa, &*pb));
+        let _ = core::hint::black_box(CtEqOps::ct_eq(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
         // ct_gt_u64
         let pa: *mut u64 = alloc_secret();
         let pb: *mut u64 = alloc_secret();
-        let _ = core::hint::black_box(CtGreeter::gt(&*pa, &*pb));
+        let _ = core::hint::black_box(CtGtOps::ct_gt(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
         // ct_gt_i64
         let pa: *mut i64 = alloc_secret();
         let pb: *mut i64 = alloc_secret();
-        let _ = core::hint::black_box(CtGreeter::gt(&*pa, &*pb));
+        let _ = core::hint::black_box(CtGtOps::ct_gt(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
         // ct_gt_u128 / i128
         let pa: *mut u128 = alloc_secret();
         let pb: *mut u128 = alloc_secret();
-        let _ = core::hint::black_box(CtGreeter::gt(&*pa, &*pb));
+        let _ = core::hint::black_box(CtGtOps::ct_gt(&*pa, &*pb));
         drop_secret(pa);
         drop_secret(pb);
 
