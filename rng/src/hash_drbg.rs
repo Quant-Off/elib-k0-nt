@@ -4,11 +4,11 @@
 //!
 //! # Features
 //! - **NIST 표준 준수**: `Instantiate`, `Reseed`, `Generate` 알고리즘을 표준 명세에 따라 구현합니다.
-//! - **다양한 해시 함수 지원**: `SHA-224`, `SHA-256`, `SHA-384`, `SHA-512`를 기반으로 하는 DRBG 인스턴스를 제공합니다.
-//!   - [`HashDRBGSHA224`] (Security Strength: 112 bits)
-//!   - [`HashDRBGSHA256`] (Security Strength: 128 bits)
-//!   - [`HashDRBGSHA384`] (Security Strength: 192 bits)
-//!   - [`HashDRBGSHA512`] (Security Strength: 256 bits)
+//! - **다양한 해시 함수 지원**: `SHA-2` / `SHA-3` 계열을 기반으로 하는 DRBG 인스턴스를 제공합니다.
+//!   - [`HashDRBGSHA224`] / [`HashDRBGSHA3_224`] (Security Strength: 112 bits)
+//!   - [`HashDRBGSHA256`] / [`HashDRBGSHA3_256`] (Security Strength: 128 bits)
+//!   - [`HashDRBGSHA384`] / [`HashDRBGSHA3_384`] (Security Strength: 192 bits)
+//!   - [`HashDRBGSHA512`] / [`HashDRBGSHA3_512`] (Security Strength: 256 bits)
 //! - **메모리 보안**: 내부 상태 `V`와 `C`를 [`SecureBuffer`]를 사용하여 관리합니다. 이를 통해 OS 레벨의 메모리 잠금(`mlock`)과 Drop 시점의 자동 소거를 보장하여, 메모리 덤프나 콜드 부트 공격으로부터 내부 상태를 보호합니다.
 //! - **Reseed 강제**: 표준에 따라 최대 reseed 간격(`RESEED_INTERVAL`)을 초과하면 [`generate`] 함수가 [`ReseedRequired`] 에러를 반환하여 주기적인 엔트로피 갱신을 강제합니다.
 //! - **유연한 입력 처리**: `instantiate`, `reseed`, `generate` 함수에서 `additional_input`과 `personalization_string`을 지원합니다.
@@ -41,13 +41,11 @@
 //! - `impl_hash_drbg!` 매크로를 사용하여 각 해시 함수에 대한 DRBG 구조체와 구현을 생성합니다. 이는 코드 중복을 최소화하고 일관성을 유지합니다.
 //! - 내부 상태 덧셈 연산(`add_mod`, `add_u64_mod`)은 Big-endian 모듈러 덧셈으로 구현되어 표준을 정확히 따릅니다.
 //! - 중간 계산값이나 스택에 복사된 민감한 데이터는 [`zeroize::Secret`] 으로 감싸 모든 종료 경로(정상/`?`/패닉) 에서 휘발성 쓰기 + 컴파일러·메모리 배리어로 자동 소거합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 use crate::{DrbgError, SecureBuffer};
 use core::cmp::min;
 use sha2::{SHA2, SHA224, SHA256, SHA384, SHA512};
+use sha3::{SHA3, SHA3_224, SHA3_256, SHA3_384, SHA3_512};
 use zeroize::{Secret, Zeroize};
 
 /// 최대 reseed 간격
@@ -85,6 +83,7 @@ macro_rules! impl_hash_drbg {
         ///
         /// 내부 상태 V, C는 [`SecureBuffer`]로 관리되어 OS 레벨 메모리 잠금(lock)과
         /// [Drop] 시점의 강제 소거([`Zeroize`])가 보장됩니다.
+        #[allow(non_camel_case_types)]
         pub struct $struct_name {
             /// 내부 상태 V — seedlen bytes
             v: SecureBuffer,
@@ -524,6 +523,10 @@ impl_hash_drbg!(HashDRBGSHA224, SHA224, 28, 55, 14); // security_strength=112 bi
 impl_hash_drbg!(HashDRBGSHA256, SHA256, 32, 55, 16); // security_strength=128 bits
 impl_hash_drbg!(HashDRBGSHA384, SHA384, 48, 111, 24); // security_strength=192 bits
 impl_hash_drbg!(HashDRBGSHA512, SHA512, 64, 111, 32); // security_strength=256 bits !Recommended!
+impl_hash_drbg!(HashDRBGSHA3_224, SHA3_224, 28, 55, 14); // security_strength=112 bits
+impl_hash_drbg!(HashDRBGSHA3_256, SHA3_256, 32, 55, 16); // security_strength=128 bits
+impl_hash_drbg!(HashDRBGSHA3_384, SHA3_384, 48, 111, 24); // security_strength=192 bits
+impl_hash_drbg!(HashDRBGSHA3_512, SHA3_512, 64, 111, 32); // security_strength=256 bits
 
 #[cfg(test)]
 mod tests {

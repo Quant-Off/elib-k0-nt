@@ -38,7 +38,10 @@ pub enum DrbgError {
     OsEntropyFailed,
 }
 
-pub use hash_drbg::{HashDRBGSHA224, HashDRBGSHA256, HashDRBGSHA384, HashDRBGSHA512};
+pub use hash_drbg::{
+    HashDRBGSHA3_224, HashDRBGSHA3_256, HashDRBGSHA3_384, HashDRBGSHA3_512, HashDRBGSHA224,
+    HashDRBGSHA256, HashDRBGSHA384, HashDRBGSHA512,
+};
 
 /// DRBG 내부 상태를 위한 최대 버퍼 크기입니다.
 /// SHA-512 기반 Hash_DRBG의 seedlen = 111바이트
