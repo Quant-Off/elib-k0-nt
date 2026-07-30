@@ -11,5 +11,7 @@ fn x86_64_kat_battery() {
 
 #[test]
 fn x86_64_target_arch_guard() {
-    assert!(cfg!(target_arch = "x86_64"));
+    const {
+        assert!(cfg!(target_arch = "x86_64"));
+    }
 }

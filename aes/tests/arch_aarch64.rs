@@ -11,5 +11,7 @@ fn aarch64_kat_battery() {
 
 #[test]
 fn aarch64_target_arch_guard() {
-    assert!(cfg!(target_arch = "aarch64"));
+    const {
+        assert!(cfg!(target_arch = "aarch64"));
+    }
 }
