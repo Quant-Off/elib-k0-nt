@@ -2,22 +2,94 @@
 
 [![Language](https://img.shields.io/badge/README-Korean_Ver-blue?style=for-the-badge)](AI_SCOPE.md)
 
-I personally write detailed specifications covering the cryptographic features and technical workings of this module, along with inline comments on the behavior of individual modules and functions. That said, I actively use the [Claude Code](http://claude.ai/) Sonnet 4.6 model to make the produced artifacts **easier to understand** — generating Mermaid diagrams, condensing context and explanations for improved readability in specifications, and handling English translation.
+While working on the `1.1.0` release, we felt it would be good to keep a checklist note of the scope in which AI agents were used, and of the parts scheduled for (or already given) direct human verification. We believe this kind of document matters a great deal in security feature development. We fully agree with any cold, realistic feedback you may have. We've adopted this development approach, but we'll keep in mind that your valuable feedback is something a human will review and judge directly.
 
-In addition, I use Opus 4.8 / Fable 5 (via Claude Code), [Gemini 3.1 Pro](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-pro?hl=en), and [Qwen 3.7 Max](https://qwen.ai/blog?id=qwen3.7) to review which functional pieces are needed for integration with the [ISO-LIGHT-K0](https://github.com/Quant-Off/iso-light-k0) microkernel, receive feedback on missing or improvable areas, and cross-check whether the cryptographic algorithms comply with international standards such as [NIST FIPS 140-2 / 140-3](https://csrc.nist.gov/projects/cryptographic-module-validation-program/fips-140-3-standards). All results are cross-validated by human domain experts.
+> [!IMPORTANT]
+> This document is not written to criticize people who use AI for various automation tasks, development, or security audits. It simply spells out, for people's benefit, the scope of AI usage in keeping with the advancing AI era. First and foremost, this document itself was written directly by a human.
 
-Because this is a solo project, I rely heavily on AI agents for **documentation and comment writing**. Agents are permitted to modify only `.md` files and `.rs` files, and solely for the purpose of adding comments to existing modules and functions. Access to **sensitive logic** — such as cryptographic algorithm implementations — is strictly restricted. I am not a vibe coder; I am simply a developer who still believes in doing things the old-fashioned way. This statement is not meant to ridicule those who use AI for automation, development, or security auditing. It is simply a disclosure of where AI assistance ends and human judgment begins, for the benefit of anyone reading this project.
+Where multiple categories are separated by a slash, that means 'OR'.
 
-## Guidelines and Prompt Conventions
+## Table of Content
 
-The `CLAUDE.md` instruction document primarily covers: comment-writing conventions, the local sandbox environment used for verifying outputs and implementations, and contextual explanations of the ecosystem.
+- [Common](#common)
+- [Crates](#crates)
+  - [AES](#aes)
+  - [BLAKE](#blake)
+  - [ChaCha20](#chacha20)
+  - [Constant-Time](#constant-time)
+  - [Ed448](#ed448)
+  - [Ed25519](#ed25519)
+  - [ML-DSA](#ml-dsa)
+  - [ML-KEM](#ml-kem)
+  - [SHA2](#sha2)
+  - [SHA3](#sha3)
+  - [X448](#x448)
+  - [X25519](#x25519)
+  - [Zeroize](#zeroize)
+- [On Guidelines and Prompts Used](#on-guidelines-and-prompts-used)
+- [Additionally](#additionally)
 
-For first-pass algorithm implementation verification, I use [GSD (Git-Ship-Done) Core](https://github.com/open-gsd/gsd-core). For structured documentation and second-brain construction — so that agents running inside a closed sandbox can learn the project efficiently — I use [Graphify](https://github.com/safishamsi/graphify). The `CLAUDE.md` file and the `.planning` directory contain environment descriptions and real local paths, so they are gitignored for security.
+## Common
 
-For documentation and comment work in Claude Code, prompts such as the following are used: *"Add a Docstring to @path/to/module."* or *"This module serves the role of ~; write and revise its comments accordingly."* For technical verification of how a module operates, prompts follow the pattern: *"Based on the comments in this module, verify the technical behavior and write the result to @path/to/target.md."* or *"Check whether the [feature] in this SHA3 implementation conforms to the state-array labeling rules defined in the FIPS 202 spec at @path/to/pdf."* **In this process, Claude Code only creates new documentation — it never directly modifies implementations.**
+- Writing the technical specification for a cryptographic algorithm in the crate root's `README.md` (Opus 5 / Fable 5)
+- Some flow, function/variable, and module explanations via `//`, `//!`, `///` comments (Opus 4.8 / Sonnet 5)
+  - Cases of AI-generated comments are included in the per-crate AI usage scope descriptions below.
+- English translation of certain documents (Sonnet 5)
+  - All documents are written in **Korean** by default.
+- Writing reports based on individual cryptographic algorithm standards (Sonnet 5 / Opus 5 / Fable 5)
+  - These reports are not distributed with the repository.
+  - We do not use AI for 100% of report writing.
+  - The process goes through (1st) analysis by a developer, (2nd) cross-verification by AI, and (3rd) cross-verification by university professors, graduate students, and security developers at small/medium enterprises (collectively, "experts"). We plan to publish a profile later based on participants' input.
+- Providing snippets for a local test environment, or similarly consistent actions (Qwen 3.5)
+- Edge-case analysis, overall code audits, and writing some test code (Fable 5)
+  - Code audit work involves discussions of differing behavior across architectures, violations of the IPC/Ring 3 isolation model arising from K0 kernel integration, and the implementation approach for specific (inherently complex) algorithms specified in cryptographic standards.
 
-Commits are initiated simply with: *"Split the current changes into n commits."*
+## Crates
 
-## Additional Notes
+### AES
 
-You are welcome to share your thoughts on the AI usage in this project at any time. Please use the <qtfelix@qu4nt.space> email or the [repository discussions](https://github.com/Quant-Off/elib-k0-nt/discussions) under the "AI Scope" category.
+### BLAKE
+
+### ChaCha20
+
+### Constant-Time
+
+- Split-style `//` comments in individual files (Sonnet 4.5)
+- [The `ct_sel_swap_value_roundtrip` test function in src/lib.rs](https://github.com/Quant-Off/elib-k0-nt/blob/7d3a0b8389fcc0a5bcbef22ae70fa380ce420614/constant-time/src/lib.rs#L732) (Opus 4.8)
+
+### Ed448
+
+### Ed25519
+
+### ML-DSA
+
+### ML-KEM
+
+### SHA2
+
+### SHA3
+
+### X448
+
+### X25519
+
+### Zeroize
+
+- Writing the `zeroize_readback.rs` test code (Opus 5)
+- Finding a solution to a problem discovered by a human (Fable 5)
+  - As a solution to the problem where `Drop` on the `Secret<T>` struct bit-zeroizes an arbitrary `T`, and the problem where `zeroize_flat<T>` is treated as a safe function while producing an invalid value, we drew the idea of a `Zeroable` marker trait from it, and wrote the skeleton code and comments for that.
+  - However, how it is applied and adapted to other modules and crates was **written directly by a human**.
+- The idea of applying constant-time primitives to the `Secret<T>` struct (Fable 5)
+
+## On Guidelines and Prompts Used
+
+The `CLAUDE.md` guideline document mainly contains comment-writing conventions, the local sandbox environment used to verify build behavior and implementation, and explanations for understanding the ecosystem. The `.planning` directory generated by the `CLAUDE.md` file and by [GSD (Git-Ship-Done) Core](https://github.com/open-gsd/gsd-core) contains specific details about the development environment (such as actual paths), so it has been ignored for security reasons.
+
+For documentation and comment writing, we use a tone and context like "Add a docstring to @path/to/module." or "This module is responsible for ~; write and revise its comments...". For verifying that a module technically works, we keep a tone like "Based on the comments written in this module, verify how the module technically operates and write the result to @path/to/target.md." or "In this SHA3 implementation per the @path/to/pdf FIPS 202 specification, check whether this module's ~ function complies with the state-array labeling rules."
+
+## Additionally
+
+If you have any thoughts on this document, feel free to let us know through whichever of the following is convenient.
+
+- Email: <qtfelix@qu4nt.space>, or
+- [Repository Discussions](https://github.com/Quant-Off/elib-k0-nt/discussions) under the "AI Scope" category
