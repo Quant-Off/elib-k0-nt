@@ -17,9 +17,6 @@
 //! // 민감한 메모리 연산
 //! memory_barrier();
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 
 // MIRI 환경에서는 inline asm 미지원이므로 fallback 경로를 사용
 // (production 빌드에는 영향 없음 cfg(miri)는 miri 실행 시에만 활성)

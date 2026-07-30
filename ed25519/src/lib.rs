@@ -22,9 +22,6 @@
 //! // 검증
 //! assert!(verify(message, &signature, &public).is_ok());
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 

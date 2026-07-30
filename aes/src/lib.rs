@@ -25,9 +25,6 @@
 //!
 //! # Security Note
 //! 모든 키 및 라운드 키는 Drop 시 강제 소거됩니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 

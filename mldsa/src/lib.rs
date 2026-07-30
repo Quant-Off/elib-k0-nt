@@ -32,9 +32,6 @@
 //! # Security Note
 //! - `xi`와 `rnd`는 반드시 암호학적으로 안전한 RNG로 생성해야 합니다.
 //! - 비밀 키는 사용 후 반드시 소거(zeroize)해야 합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 

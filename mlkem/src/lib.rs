@@ -34,9 +34,6 @@
 //! - 시드 `d`, `z`, `m`은 반드시 암호학적으로 안전한 난수 생성기(CSPRNG)로 생성해야 합니다.
 //! - 역캡슐화 키(`dk`)는 `Secret` 래퍼로 보호되며, 스코프 종료 시 자동 소거됩니다.
 //! - 암호문 변조 시 암묵적 거부(implicit rejection)를 수행합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 
