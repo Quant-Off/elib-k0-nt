@@ -255,7 +255,8 @@ pub(crate) fn dispatch_ed25519_keygen(
         None => return encode_error(wire_out.as_mut_slice(), IpcError::MalformedRequest),
     };
     seed.copy_from_slice(seed_src);
-    let keypair = ed25519::Keypair::from_seed(&seed);
+    let mut keypair = ed25519::Keypair::default();
+    keypair.init(&seed);
     let pk_bytes: [u8; 32] = *keypair.public.as_bytes();
 
     // payload = pk(32) || sk(32) = 64
@@ -306,7 +307,8 @@ pub(crate) fn dispatch_ed25519_sign(
         None => return encode_error(wire_out.as_mut_slice(), IpcError::MalformedRequest),
     };
     seed.copy_from_slice(seed_src);
-    let keypair = ed25519::Keypair::from_seed(&seed);
+    let mut keypair = ed25519::Keypair::default();
+    keypair.init(&seed);
     let msg_len = arena.msg_len as usize;
     let msg = match arena.msg.get(..msg_len) {
         Some(m) => m,
@@ -605,7 +607,9 @@ mod tests {
         // sk 는 seed 그대로
         assert_eq!(&wire[HEADER_LEN + 32..HEADER_LEN + 64], &seed);
         // pk 는 ed25519 reference 와 일치 (as_bytes — to_bytes 아님 per W-05)
-        let expected_pk: [u8; 32] = *ed25519::Keypair::from_seed(&seed).public.as_bytes();
+        let mut expected_kp = ed25519::Keypair::default();
+        expected_kp.init(&seed);
+        let expected_pk: [u8; 32] = *expected_kp.public.as_bytes();
         assert_eq!(&wire[HEADER_LEN..HEADER_LEN + 32], &expected_pk);
     }
 

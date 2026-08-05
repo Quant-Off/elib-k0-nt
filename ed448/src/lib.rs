@@ -11,8 +11,9 @@
 //! ```rust,ignore
 //! use ed448::{SecretKey, PublicKey, sign, verify};
 //!
-//! // 키 생성
-//! let secret = SecretKey::from_bytes(&seed);
+//! // 키 생성 (제자리 초기화로 move 잔류 방지)
+//! let mut secret = SecretKey::default();
+//! secret.init(&seed);
 //! let public = PublicKey::from(&secret);
 //!
 //! // 서명
@@ -53,10 +54,25 @@ pub enum Ed448Error {
 /// Drop 시 내부 데이터가 `Secret` 의 Drop 으로 자동 소거됩니다.
 pub struct SecretKey(Secret<[u8; SECRET_KEY_LENGTH]>);
 
+impl Default for SecretKey {
+    fn default() -> Self {
+        SecretKey(Secret::new([0u8; SECRET_KEY_LENGTH]))
+    }
+}
+
 impl SecretKey {
+    /// 57바이트 시드를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `bytes`: 57바이트 시드
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// move 로 인한 시드 스택 잔류가 없습니다. 입력 버퍼는 호출자가
+    /// 사용 후 직접 소거해야 합니다.
     #[inline]
-    pub fn from_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Self {
-        SecretKey(Secret::new(*bytes))
+    pub fn init(&mut self, bytes: &[u8; SECRET_KEY_LENGTH]) {
+        self.0.init_with(|k| *k = *bytes);
     }
 
     #[inline]
@@ -64,16 +80,16 @@ impl SecretKey {
         self.0.expose()
     }
 
-    fn expand(&self) -> ExpandedSecretKey {
+    fn expand_into(&self, out: &mut ExpandedSecretKey) {
         let mut h = SHAKE256::new();
         h.update(self.0.expose());
         let mut hash = Secret::new([0u8; 114]);
         h.finalize_into(hash.expose_mut());
 
         let mut lower = Secret::new([0u8; 57]);
-        let mut upper = Secret::new([0u8; 57]);
         lower.expose_mut().copy_from_slice(&hash.expose()[..57]);
-        upper.expose_mut().copy_from_slice(&hash.expose()[57..]);
+        out.nonce
+            .init_with(|n| n.copy_from_slice(&hash.expose()[57..]));
 
         {
             let lo = lower.expose_mut();
@@ -84,26 +100,24 @@ impl SecretKey {
 
         // 클램핑된 스칼라는 L 이상일 수 있으므로 mod L 리듀스
         let mut clamped = Scalar::from_bytes(*lower.expose());
-        let scalar = sc_muladd(&Scalar::one(), &clamped, &Scalar::zero());
+        out.scalar = sc_muladd(&Scalar::one(), &clamped, &Scalar::zero());
         clamped.zeroize();
         // hash, lower 는 스코프 종료 시 Secret::Drop 으로 자동 소거
-
-        ExpandedSecretKey {
-            scalar,
-            nonce: upper,
-        }
-    }
-}
-
-impl Clone for SecretKey {
-    fn clone(&self) -> Self {
-        SecretKey(Secret::new(*self.0.expose()))
     }
 }
 
 struct ExpandedSecretKey {
     scalar: Scalar,
     nonce: Secret<[u8; 57]>,
+}
+
+impl Default for ExpandedSecretKey {
+    fn default() -> Self {
+        Self {
+            scalar: Scalar::zero(),
+            nonce: Secret::new([0u8; 57]),
+        }
+    }
 }
 
 impl Drop for ExpandedSecretKey {
@@ -116,6 +130,12 @@ impl Drop for ExpandedSecretKey {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PublicKey([u8; PUBLIC_KEY_LENGTH]);
+
+impl Default for PublicKey {
+    fn default() -> Self {
+        PublicKey([0u8; PUBLIC_KEY_LENGTH])
+    }
+}
 
 impl PublicKey {
     #[inline]
@@ -135,7 +155,8 @@ impl PublicKey {
 
 impl From<&SecretKey> for PublicKey {
     fn from(secret: &SecretKey) -> Self {
-        let expanded = secret.expand();
+        let mut expanded = ExpandedSecretKey::default();
+        secret.expand_into(&mut expanded);
         let point = EdwardsPoint::basepoint_mul(&expanded.scalar);
         PublicKey(point.to_bytes())
     }
@@ -186,7 +207,8 @@ pub fn sign(message: &[u8], secret_key: &SecretKey) -> Signature {
 }
 
 pub fn sign_with_context(message: &[u8], secret_key: &SecretKey, context: &[u8]) -> Signature {
-    let expanded = secret_key.expand();
+    let mut expanded = ExpandedSecretKey::default();
+    secret_key.expand_into(&mut expanded);
     let public_key = PublicKey::from(secret_key);
     let (dom, dom_len) = dom4(context);
 
@@ -284,16 +306,24 @@ pub fn verify_with_context(
     }
 }
 
+#[derive(Default)]
 pub struct Keypair {
     pub secret: SecretKey,
     pub public: PublicKey,
 }
 
 impl Keypair {
-    pub fn from_seed(seed: &[u8; 57]) -> Self {
-        let secret = SecretKey::from_bytes(seed);
-        let public = PublicKey::from(&secret);
-        Keypair { secret, public }
+    /// 57바이트 시드로 키페어를 제자리에서 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `seed`: 57바이트 시드
+    ///
+    /// # Security Note
+    /// `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면 move 로 인한
+    /// 비밀키 스택 잔류가 없습니다.
+    pub fn init(&mut self, seed: &[u8; 57]) {
+        self.secret.init(seed);
+        self.public = PublicKey::from(&self.secret);
     }
 
     pub fn sign(&self, message: &[u8]) -> Signature {
@@ -325,18 +355,21 @@ mod tests {
     #[test]
     fn test_keypair_generation() {
         let seed = [42u8; 57];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         assert_ne!(keypair.public.as_bytes(), &[0u8; 57]);
     }
 
     #[test]
     fn test_sign_verify_roundtrip() {
         let seed = [42u8; 57];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         let message = b"test message";
 
         // Verify expanded scalar is now canonical
-        let expanded = keypair.secret.expand();
+        let mut expanded = ExpandedSecretKey::default();
+        keypair.secret.expand_into(&mut expanded);
         let a_scalar = expanded.scalar;
         let a_point = keypair.public.as_point().unwrap();
         let (dom, dom_len) = dom4(&[]);
@@ -527,7 +560,8 @@ mod tests {
     #[test]
     fn test_wrong_message() {
         let seed = [42u8; 57];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         let message = b"test message";
         let wrong_message = b"wrong message";
 
@@ -539,8 +573,10 @@ mod tests {
     fn test_wrong_key() {
         let seed1 = [1u8; 57];
         let seed2 = [2u8; 57];
-        let keypair1 = Keypair::from_seed(&seed1);
-        let keypair2 = Keypair::from_seed(&seed2);
+        let mut keypair1 = Keypair::default();
+        keypair1.init(&seed1);
+        let mut keypair2 = Keypair::default();
+        keypair2.init(&seed2);
         let message = b"test message";
 
         let signature = keypair1.sign(message);
@@ -550,7 +586,8 @@ mod tests {
     #[test]
     fn test_context_signature() {
         let seed = [42u8; 57];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         let message = b"test message";
         let context = b"test context";
 
