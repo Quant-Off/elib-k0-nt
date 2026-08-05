@@ -82,18 +82,21 @@ fn gf128_mul(x: u128, y: u128) -> u128 {
     reduce_natural(lo, hi).reverse_bits()
 }
 
+#[derive(Default)]
 pub struct GHash {
     h_n: Secret<u128>,
     state_n: Secret<u128>,
 }
 
 impl GHash {
-    #[must_use]
-    pub fn new(h: &[u8; 16]) -> Self {
-        Self {
-            h_n: Secret::new(u128::from_be_bytes(*h).reverse_bits()),
-            state_n: Secret::new(0),
-        }
+    /// 인증 서브키를 제자리에서 설정하고 상태를 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `h`: 16바이트 인증 서브키
+    pub fn init(&mut self, h: &[u8; 16]) {
+        self.h_n
+            .init_with(|v| *v = u128::from_be_bytes(*h).reverse_bits());
+        self.state_n.zeroize();
     }
 
     pub fn update(&mut self, block: &[u8; 16]) {
@@ -118,9 +121,16 @@ impl GHash {
         }
     }
 
+    /// 누적 상태를 태그로 출력하고 상태를 제자리에서 소거합니다.
+    ///
+    /// # Security Note
+    /// `self` 를 이동 소비하지 않으므로 원본 슬롯에 사본이 남지 않으며,
+    /// 서브키 소거는 스코프 종료 시 `Drop` 이 제자리에서 수행합니다.
     #[must_use]
-    pub fn finalize(self) -> [u8; 16] {
-        self.state_n.expose().reverse_bits().to_be_bytes()
+    pub fn finalize(&mut self) -> [u8; 16] {
+        let tag = self.state_n.expose().reverse_bits().to_be_bytes();
+        self.state_n.zeroize();
+        tag
     }
 
     pub fn reset(&mut self) {
@@ -141,7 +151,8 @@ mod tests {
         let mut storage: MaybeUninit<GHash> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(GHash::new(&h));
+            storage.write(GHash::default());
+            (*storage.as_mut_ptr()).init(&h);
             (*storage.as_mut_ptr()).update(&[0xAAu8; 16]);
 
             let h_ptr = (*storage.as_ptr()).h_n.expose() as *const u128 as *const u8;
@@ -176,7 +187,8 @@ mod tests {
             0xde, 0xb7,
         ];
 
-        let mut ghash = GHash::new(&h);
+        let mut ghash = GHash::default();
+        ghash.init(&h);
         ghash.update(&data);
         let result = ghash.finalize();
         assert_eq!(result, expected);

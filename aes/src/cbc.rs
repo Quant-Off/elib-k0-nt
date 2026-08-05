@@ -3,16 +3,18 @@ use zeroize::Zeroize;
 
 pub const CBC_IV_SIZE: usize = 16;
 
+#[derive(Default)]
 pub struct AES256CBC {
     cipher: AES256,
 }
 
 impl AES256CBC {
-    #[must_use]
-    pub fn new(key: &[u8; 32]) -> Self {
-        Self {
-            cipher: AES256::new(key),
-        }
+    /// 256비트 키를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    pub fn init(&mut self, key: &[u8; 32]) {
+        self.cipher.init(key);
     }
 
     pub fn encrypt(
@@ -111,7 +113,8 @@ mod tests {
             0xda, 0x6c, 0x19, 0x07, 0x8c, 0x6a, 0x9d, 0x1b,
         ];
 
-        let cbc = AES256CBC::new(&key);
+        let mut cbc = AES256CBC::default();
+        cbc.init(&key);
         let mut ciphertext = [0u8; 64];
         cbc.encrypt(&iv, &plaintext, &mut ciphertext).unwrap();
         assert_eq!(ciphertext, expected_ciphertext);
@@ -138,7 +141,8 @@ mod tests {
             0x73, 0x74, 0x21, 0x00,
         ];
 
-        let cbc = AES256CBC::new(&key);
+        let mut cbc = AES256CBC::default();
+        cbc.init(&key);
         let mut ciphertext = [0u8; 32];
         cbc.encrypt(&iv, &plaintext, &mut ciphertext).unwrap();
 
@@ -153,7 +157,8 @@ mod tests {
         let iv = [0x22u8; 16];
         let plaintext = [0x33u8; 17];
 
-        let cbc = AES256CBC::new(&key);
+        let mut cbc = AES256CBC::default();
+        cbc.init(&key);
         let mut ciphertext = [0u8; 32];
         let result = cbc.encrypt(&iv, &plaintext, &mut ciphertext);
         assert_eq!(result, Err(Error::InvalidLength));
@@ -165,7 +170,8 @@ mod tests {
         let iv = [0x22u8; 16];
         let plaintext = [0x33u8; 32];
 
-        let cbc = AES256CBC::new(&key);
+        let mut cbc = AES256CBC::default();
+        cbc.init(&key);
         let mut ciphertext = [0u8; 16];
         let result = cbc.encrypt(&iv, &plaintext, &mut ciphertext);
         assert_eq!(result, Err(Error::BufferTooSmall));

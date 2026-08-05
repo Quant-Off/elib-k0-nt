@@ -124,12 +124,15 @@ fn one_shot(mode: Mode, key: &[u8; 32], iv: &[u8; 16], pt: &[u8], ctx: &str) -> 
     let mut ct = vec![0u8; pt.len()];
     match mode {
         Mode::CNC => {
-            AES256CBC::new(key)
+            let mut cipher = AES256CBC::default();
+            cipher.init(key);
+            cipher
                 .encrypt(iv, pt, &mut ct)
                 .unwrap_or_else(|e| panic!("{ctx}: CBC 암호화 실패 {e:?}"));
         }
         Mode::CTR => {
-            let cipher = AES256CTR::new(key);
+            let mut cipher = AES256CTR::default();
+            cipher.init(key);
             let mut counter = u128::from_be_bytes(*iv);
             for (pt_chunk, ct_chunk) in pt.chunks(16).zip(ct.chunks_mut(16)) {
                 cipher
@@ -154,7 +157,8 @@ fn mct_chain(mode: Mode, mut key: [u8; 32], mut iv: [u8; 16], mut pt: [u8; 16]) 
         let mut ct = [0u8; 16];
         match mode {
             Mode::CNC => {
-                let cipher = AES256CBC::new(&key);
+                let mut cipher = AES256CBC::default();
+                cipher.init(&key);
                 let mut chain = iv;
                 let mut block = pt;
                 for _ in 0..MCT_INNER {
@@ -169,7 +173,8 @@ fn mct_chain(mode: Mode, mut key: [u8; 32], mut iv: [u8; 16], mut pt: [u8; 16]) 
                 pt = ct_prev;
             }
             Mode::CTR => {
-                let cipher = AES256CTR::new(&key);
+                let mut cipher = AES256CTR::default();
+                cipher.init(&key);
                 let mut counter = u128::from_be_bytes(iv);
                 let mut block = pt;
                 for _ in 0..MCT_INNER {

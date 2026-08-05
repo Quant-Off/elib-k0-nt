@@ -58,7 +58,8 @@ fn fips197_c3() -> Result<(), &'static str> {
         0x89,
     ];
 
-    let cipher = AES256::new(&key);
+    let mut cipher = AES256::default();
+    cipher.init(&key);
 
     let ciphertext = cipher.encrypt(&plaintext);
     if ciphertext != expected_ciphertext {
@@ -98,7 +99,8 @@ fn cbc_sp800_38a_f2_5() -> Result<(), &'static str> {
         0x8c, 0x6a, 0x9d, 0x1b,
     ];
 
-    let cbc = AES256CBC::new(&key);
+    let mut cbc = AES256CBC::default();
+    cbc.init(&key);
 
     let mut ciphertext = [0u8; 64];
     if cbc.encrypt(&iv, &plaintext, &mut ciphertext).is_err() {
@@ -144,7 +146,8 @@ fn ctr_sp800_38a_f5_5() -> Result<(), &'static str> {
         0x45, 0x79, 0x41, 0xa6,
     ];
 
-    let ctr = AES256CTR::new(&key);
+    let mut ctr = AES256CTR::default();
+    ctr.init(&key);
 
     let mut ciphertext = [0u8; 64];
     if ctr.apply_iv(&iv, &plaintext, &mut ciphertext).is_err() {
@@ -175,7 +178,8 @@ fn gcm_case_14() -> Result<(), &'static str> {
         0x8b,
     ];
 
-    let gcm = AES256GCM::new(&key);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&key);
 
     let mut ciphertext = [0u8; 0];
     let mut tag = [0u8; GCM_TAG_SIZE];
@@ -214,7 +218,8 @@ fn gcm_case_15() -> Result<(), &'static str> {
         0x19,
     ];
 
-    let gcm = AES256GCM::new(&key);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&key);
 
     let mut ciphertext = [0u8; BLOCK_SIZE];
     let mut tag = [0u8; GCM_TAG_SIZE];
@@ -248,7 +253,8 @@ fn gcm_case_15() -> Result<(), &'static str> {
 fn gcm_case_16() -> Result<(), &'static str> {
     let aad: [u8; 0] = [];
 
-    let gcm = AES256GCM::new(&GCM16_KEY);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&GCM16_KEY);
 
     let mut ciphertext = [0u8; 64];
     let mut tag = [0u8; GCM_TAG_SIZE];
@@ -288,7 +294,8 @@ fn gcm_case_16() -> Result<(), &'static str> {
 fn gcm_auth_failure() -> Result<(), &'static str> {
     let aad: [u8; 0] = [];
 
-    let gcm = AES256GCM::new(&GCM16_KEY);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&GCM16_KEY);
 
     let mut ciphertext = [0u8; 64];
     let mut tag = [0u8; GCM_TAG_SIZE];
@@ -321,7 +328,8 @@ fn aes256_drop_readback() -> Result<(), &'static str> {
     let mut storage: MaybeUninit<AES256> = MaybeUninit::uninit();
 
     unsafe {
-        storage.write(AES256::new(&key));
+        storage.write(AES256::default());
+        storage.assume_init_mut().init(&key);
         let ptr = storage.as_ptr().cast::<u8>();
 
         let pre = core::slice::from_raw_parts(ptr, byte_len);

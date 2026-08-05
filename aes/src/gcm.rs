@@ -21,17 +21,25 @@ fn inc32(block: &mut [u8; 16]) {
     }
 }
 
+#[derive(Default)]
 pub struct AES256GCM {
     cipher: AES256,
     h: Secret<[u8; 16]>,
 }
 
 impl AES256GCM {
-    #[must_use]
-    pub fn new(key: &[u8; 32]) -> Self {
-        let cipher = AES256::new(key);
-        let h = Secret::new(cipher.encrypt(&[0u8; 16]));
-        Self { cipher, h }
+    /// 256비트 키와 해시 서브키를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    ///
+    /// # Security Note
+    /// `Default` 로 만든 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// 라운드 키와 해시 서브키의 move 스택 잔류가 없습니다.
+    pub fn init(&mut self, key: &[u8; 32]) {
+        self.cipher.init(key);
+        self.h
+            .init_with(|dst| *dst = self.cipher.encrypt(&[0u8; 16]));
     }
 
     fn gctr(&self, icb: &[u8; 16], input: &[u8], output: &mut [u8]) {
@@ -70,7 +78,8 @@ impl AES256GCM {
             return self.compute_j0(nonce);
         }
 
-        let mut ghash = GHash::new(self.h.expose());
+        let mut ghash = GHash::default();
+        ghash.init(self.h.expose());
         ghash.update_padded(iv);
 
         let mut len_block = [0u8; 16];
@@ -84,7 +93,8 @@ impl AES256GCM {
     }
 
     fn compute_tag(&self, aad: &[u8], ciphertext: &[u8], j0: &[u8; 16]) -> [u8; 16] {
-        let mut ghash = GHash::new(self.h.expose());
+        let mut ghash = GHash::default();
+        ghash.init(self.h.expose());
 
         ghash.update_padded(aad);
         ghash.update_padded(ciphertext);
@@ -240,7 +250,8 @@ mod tests {
         let mut storage: MaybeUninit<AES256GCM> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(AES256GCM::new(&key));
+            storage.write(AES256GCM::default());
+            storage.assume_init_mut().init(&key);
             let h_ptr = storage.assume_init_ref().h.expose().as_ptr();
             let rk_ptr = storage
                 .assume_init_ref()
@@ -279,7 +290,8 @@ mod tests {
             0x73, 0x8b,
         ];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 0];
         let mut tag = [0u8; 16];
         gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -302,7 +314,8 @@ mod tests {
             0xb9, 0x19,
         ];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 16];
         let mut tag = [0u8; 16];
         gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -346,7 +359,8 @@ mod tests {
             0xcc, 0x6c,
         ];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 64];
         let mut tag = [0u8; 16];
         gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -394,7 +408,8 @@ mod tests {
             0x55, 0x1b,
         ];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 60];
         let mut tag = [0u8; 16];
         gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -422,7 +437,8 @@ mod tests {
         let plaintext: [u8; 16] = [0u8; 16];
         let aad: [u8; 0] = [];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 16];
         let mut tag = [0u8; 16];
         gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -442,7 +458,8 @@ mod tests {
         let aad: [u8; 0] = [];
         let plaintext = [0x33u8; 32];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 16];
         let mut tag = [0u8; 16];
         let result = gcm.encrypt(&nonce, &aad, &plaintext, &mut ciphertext, &mut tag);
@@ -475,7 +492,8 @@ mod tests {
         );
         let expected_tag: [u8; 16] = hex_arr("3a337dbf46a792c45e454913fe2ea8f2");
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 60];
         let mut tag = [0u8; 16];
         gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -506,7 +524,8 @@ mod tests {
         );
         let expected_tag: [u8; 16] = hex_arr("a44a8266ee1c8eb0c8b5d4cf5ae9f19a");
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 60];
         let mut tag = [0u8; 16];
         gcm.encrypt_with_iv(&iv, &aad, &plaintext, &mut ciphertext, &mut tag)
@@ -528,7 +547,8 @@ mod tests {
         let aad: [u8; 0] = [];
         let plaintext = [0x33u8; 24];
 
-        let gcm = AES256GCM::new(&key);
+        let mut gcm = AES256GCM::default();
+        gcm.init(&key);
         let mut ciphertext = [0u8; 24];
         let mut full_tag = [0u8; 16];
         gcm.encrypt(&iv, &aad, &plaintext, &mut ciphertext, &mut full_tag)
