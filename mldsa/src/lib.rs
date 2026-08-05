@@ -92,7 +92,7 @@ mod params {
     pub const SIG_LEN_87: usize = 4627;
 }
 
-use keys::{keygen_internal, pk_encode, sk_encode};
+use keys::{PrivateKey, PublicKey, keygen_internal, pk_encode, sk_encode};
 use params::*;
 use sign::{sign_internal, verify_internal};
 
@@ -121,7 +121,9 @@ impl MLDSA44 {
     /// # Errors
     /// 내부 연산 실패 시 `Error::InternalError` 반환
     pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN_44], [u8; SK_LEN_44]), Error> {
-        let (pk, sk) = keygen_internal::<K_44, L_44, ETA_44>(xi)?;
+        let mut pk = PublicKey::<K_44>::default();
+        let mut sk = PrivateKey::<K_44, L_44>::default();
+        keygen_internal::<K_44, L_44, ETA_44>(xi, &mut pk, &mut sk)?;
         let pk_bytes = pk_encode::<K_44, PK_LEN_44>(&pk);
         let sk_bytes = sk_encode::<K_44, L_44, ETA_44, SK_LEN_44>(&sk);
         Ok((pk_bytes, sk_bytes))
@@ -236,7 +238,9 @@ impl MLDSA65 {
     /// # Errors
     /// 내부 연산 실패 시 `Error::InternalError` 반환
     pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN_65], [u8; SK_LEN_65]), Error> {
-        let (pk, sk) = keygen_internal::<K_65, L_65, ETA_65>(xi)?;
+        let mut pk = PublicKey::<K_65>::default();
+        let mut sk = PrivateKey::<K_65, L_65>::default();
+        keygen_internal::<K_65, L_65, ETA_65>(xi, &mut pk, &mut sk)?;
         let pk_bytes = pk_encode::<K_65, PK_LEN_65>(&pk);
         let sk_bytes = sk_encode::<K_65, L_65, ETA_65, SK_LEN_65>(&sk);
         Ok((pk_bytes, sk_bytes))
@@ -351,7 +355,9 @@ impl MLDSA87 {
     /// # Errors
     /// 내부 연산 실패 시 `Error::InternalError` 반환
     pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN_87], [u8; SK_LEN_87]), Error> {
-        let (pk, sk) = keygen_internal::<K_87, L_87, ETA_87>(xi)?;
+        let mut pk = PublicKey::<K_87>::default();
+        let mut sk = PrivateKey::<K_87, L_87>::default();
+        keygen_internal::<K_87, L_87, ETA_87>(xi, &mut pk, &mut sk)?;
         let pk_bytes = pk_encode::<K_87, PK_LEN_87>(&pk);
         let sk_bytes = sk_encode::<K_87, L_87, ETA_87, SK_LEN_87>(&sk);
         Ok((pk_bytes, sk_bytes))

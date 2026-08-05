@@ -27,6 +27,28 @@ pub struct PrivateKey<const K: usize, const L: usize> {
     pub t0: Secret<PolyVec<K>>,
 }
 
+impl<const K: usize, const L: usize> Default for PrivateKey<K, L> {
+    fn default() -> Self {
+        Self {
+            rho: [0u8; 32],
+            k_seed: Secret::new([0u8; 32]),
+            tr: [0u8; 64],
+            s1: Secret::new(PolyVec::<L>::new_zero()),
+            s2: Secret::new(PolyVec::<K>::new_zero()),
+            t0: Secret::new(PolyVec::<K>::new_zero()),
+        }
+    }
+}
+
+impl<const K: usize> Default for PublicKey<K> {
+    fn default() -> Self {
+        Self {
+            rho: [0u8; 32],
+            t1: PolyVec::<K>::new_zero(),
+        }
+    }
+}
+
 #[inline(always)]
 fn is_negative_ct(v: i32) -> Choice {
     Choice::from_u8(((v >> 31) & 1) as u8)
@@ -55,7 +77,9 @@ fn power2round_vec<const K: usize>(t: &PolyVec<K>) -> (PolyVec<K>, PolyVec<K>) {
 
 pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     xi: &[u8; 32],
-) -> Result<(PublicKey<K>, PrivateKey<K, L>), Error> {
+    pk: &mut PublicKey<K>,
+    sk: &mut PrivateKey<K, L>,
+) -> Result<(), Error> {
     let mut seed_input = [0u8; 34];
     seed_input[..32].copy_from_slice(xi);
     seed_input[32] = K as u8;
@@ -75,17 +99,17 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
 
     let a_hat = expand_a::<K, L>(&rho)?;
     let (mut s1, mut s2pv) = expand_s::<K, L, ETA>(&rho_prime)?;
-    let s2 = Secret::new(s2pv);
+    sk.s2.init_with(|dst| *dst = s2pv);
     s2pv.zeroize();
 
-    let s1_original = Secret::new(s1);
+    sk.s1.init_with(|dst| *dst = s1);
     s1.ntt();
     let mut t = a_hat.multiply_vector(&s1);
     t.intt();
-    t = t.add(&s2);
+    t = t.add(sk.s2.expose());
 
     let (t1, mut t0pv) = power2round_vec(&t);
-    let t0 = Secret::new(t0pv);
+    sk.t0.init_with(|dst| *dst = t0pv);
     t0pv.zeroize();
 
     let mut shake_tr = SHAKE256::new();
@@ -98,15 +122,11 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     let mut tr = [0u8; 64];
     shake_tr.finalize_into(&mut tr);
 
-    let pk = PublicKey { rho, t1 };
-    let sk = PrivateKey {
-        rho,
-        k_seed: Secret::new(k_seed),
-        tr,
-        s1: s1_original,
-        s2,
-        t0,
-    };
+    pk.rho = rho;
+    pk.t1 = t1;
+    sk.rho = rho;
+    sk.k_seed.init_with(|dst| *dst = k_seed);
+    sk.tr = tr;
 
     k_seed.zeroize();
     expanded.zeroize();
@@ -114,7 +134,7 @@ pub fn keygen_internal<const K: usize, const L: usize, const ETA: i32>(
     s1.zeroize();
     t.zeroize();
 
-    Ok((pk, sk))
+    Ok(())
 }
 
 pub fn pk_encode<const K: usize, const PK_LEN: usize>(pk: &PublicKey<K>) -> [u8; PK_LEN] {
@@ -171,7 +191,8 @@ pub fn sk_encode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: u
 
 pub fn sk_decode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: usize>(
     sk_bytes: &[u8; SK_LEN],
-) -> PrivateKey<K, L> {
+    out: &mut PrivateKey<K, L>,
+) {
     let eta_bw = bitlen((2 * ETA) as u32);
     let s1_len = L * 32 * eta_bw;
     let s2_len = K * 32 * eta_bw;
@@ -183,32 +204,25 @@ pub fn sk_decode<const K: usize, const L: usize, const ETA: i32, const SK_LEN: u
     rho.copy_from_slice(&sk_bytes[off..off + 32]);
     off += 32;
 
-    let mut k_seed_local = [0u8; 32];
-    k_seed_local.copy_from_slice(&sk_bytes[off..off + 32]);
-    let k_seed = Secret::new(k_seed_local);
-    k_seed_local.zeroize();
+    out.k_seed
+        .init_with(|dst| dst.copy_from_slice(&sk_bytes[off..off + 32]));
     off += 32;
 
     let mut tr = [0u8; 64];
     tr.copy_from_slice(&sk_bytes[off..off + 64]);
     off += 64;
 
-    let s1: Secret<PolyVec<L>> =
-        Secret::new(polyvec_bit_unpack_eta(&sk_bytes[off..off + s1_len], ETA));
+    out.s1
+        .init_with(|dst| *dst = polyvec_bit_unpack_eta(&sk_bytes[off..off + s1_len], ETA));
     off += s1_len;
 
-    let s2: Secret<PolyVec<K>> =
-        Secret::new(polyvec_bit_unpack_eta(&sk_bytes[off..off + s2_len], ETA));
+    out.s2
+        .init_with(|dst| *dst = polyvec_bit_unpack_eta(&sk_bytes[off..off + s2_len], ETA));
     off += s2_len;
 
-    let t0: Secret<PolyVec<K>> = Secret::new(polyvec_bit_unpack_t0(&sk_bytes[off..off + t0_len]));
+    out.t0
+        .init_with(|dst| *dst = polyvec_bit_unpack_t0(&sk_bytes[off..off + t0_len]));
 
-    PrivateKey {
-        rho,
-        k_seed,
-        tr,
-        s1,
-        s2,
-        t0,
-    }
+    out.rho = rho;
+    out.tr = tr;
 }
