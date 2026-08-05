@@ -20,7 +20,8 @@
 //! fn main() -> Result<(), DrbgError> {
 //!     // 1. 초기화 — OS 엔트로피 소스 사용 (임의 엔트로피 주입 불가)
 //!     let personalization = Some(b"my-app-specific-string" as &[u8]);
-//!     let mut drbg = HashDRBGSHA256::new_from_os(personalization)?;
+//!     let mut drbg = HashDRBGSHA256::default();
+//!     drbg.init_from_os(personalization)?;
 //!
 //!     // 2. 난수 생성 (Generate)
 //!     let mut random_bytes = [0u8; 128];
@@ -91,6 +92,16 @@ macro_rules! impl_hash_drbg {
             c: SecureBuffer,
             /// reseed 카운터 (1부터 시작, RESEED_INTERVAL 초과 시 ReseedRequired 반환)
             reseed_counter: u64,
+        }
+
+        impl Default for $struct_name {
+            fn default() -> Self {
+                Self {
+                    v: SecureBuffer::default(),
+                    c: SecureBuffer::default(),
+                    reseed_counter: 0,
+                }
+            }
         }
 
         impl $struct_name {
@@ -258,7 +269,13 @@ macro_rules! impl_hash_drbg {
             ///
             /// # Errors
             /// - `DrbgError::OsEntropyFailed`: OS 엔트로피 소스 접근 실패
-            pub fn new_from_os(personalization_string: Option<&[u8]>) -> Result<Self, DrbgError> {
+            /// # Security Note
+            /// 내부 상태는 호출자가 둔 `self` 위치에 제자리 기록되므로 by-value
+            /// 반환에 따른 move 스택 잔류가 없습니다.
+            pub fn init_from_os(
+                &mut self,
+                personalization_string: Option<&[u8]>,
+            ) -> Result<(), DrbgError> {
                 // entropy_input: 2 × security_strength 바이트 (별개 호출로 독립성 보장)
                 let entropy = crate::os_entropy::extract_os_entropy($min_entropy * 2)
                     .map_err(|_| DrbgError::OsEntropyFailed)?;
@@ -268,7 +285,7 @@ macro_rules! impl_hash_drbg {
                     .map_err(|_| DrbgError::OsEntropyFailed)?;
 
                 // SecureBuffer는 Drop 시 자동 소거 — 별도 write_volatile 루프 불필요
-                Self::instantiate(entropy.as_slice(), nonce.as_slice(), personalization_string)
+                self.instantiate(entropy.as_slice(), nonce.as_slice(), personalization_string)
             }
 
             /// 호출자가 수집한 하드웨어 엔트로피로 DRBG를 초기화합니다.
@@ -295,12 +312,13 @@ macro_rules! impl_hash_drbg {
             /// 상위 계층(키 생성, Capability 토큰, IV)의 보안이 붕괴됩니다.
             /// 가능한 경우 [`new_from_os`] 를 우선 사용하고, 이 함수는 OS 엔트로피
             /// 소스를 사용할 수 없는 경우에만 사용하세요.
-            pub unsafe fn new_from_entropy(
+            pub unsafe fn init_from_entropy(
+                &mut self,
                 entropy_input: &[u8],
                 nonce: &[u8],
                 personalization_string: Option<&[u8]>,
-            ) -> Result<Self, DrbgError> {
-                Self::instantiate(entropy_input, nonce, personalization_string)
+            ) -> Result<(), DrbgError> {
+                self.instantiate(entropy_input, nonce, personalization_string)
             }
 
             /// NIST SP 800-90A Rev. 1, Section 10.1.1.2: Hash_DRBG_Instantiate_algorithm
@@ -317,10 +335,11 @@ macro_rules! impl_hash_drbg {
             /// DRBG 출력의 무작위성이 공격자에 의해 제어될 수 있습니다.
             /// 외부 코드는 반드시 [`new_from_os`]를 통해 OS 엔트로피로 초기화하세요.
             pub(crate) fn instantiate(
+                &mut self,
                 entropy_input: &[u8],
                 nonce: &[u8],
                 personalization_string: Option<&[u8]>,
-            ) -> Result<Self, DrbgError> {
+            ) -> Result<(), DrbgError> {
                 // NIST SP 800-90A Rev. 1, Section 8.6.7 검증
                 if entropy_input.len() < $min_entropy {
                     return Err(DrbgError::EntropyTooShort);
@@ -342,24 +361,26 @@ macro_rules! impl_hash_drbg {
                 }
 
                 // V = Hash_df(entropy_input || nonce || personalization_string, seedlen)
-                let mut v_buf =
-                    SecureBuffer::new_owned($seedlen).map_err(|_| DrbgError::AllocationFailed)?;
-                Self::hash_df(&[entropy_input, nonce, ps], $seedlen, v_buf.as_mut_slice())?;
+                // 이전 상태를 소거한 뒤 최종 위치에 직접 기록
+                self.v
+                    .init($seedlen)
+                    .map_err(|_| DrbgError::AllocationFailed)?;
+                Self::hash_df(&[entropy_input, nonce, ps], $seedlen, self.v.as_mut_slice())?;
 
                 // C = Hash_df(0x00 || V, seedlen)
-                let mut c_buf =
-                    SecureBuffer::new_owned($seedlen).map_err(|_| DrbgError::AllocationFailed)?;
+                self.c
+                    .init($seedlen)
+                    .map_err(|_| DrbgError::AllocationFailed)?;
+                let mut c_tmp = Secret::new([0u8; $seedlen]);
                 Self::hash_df(
-                    &[&[0x00u8], v_buf.as_slice()],
+                    &[&[0x00u8], self.v.as_slice()],
                     $seedlen,
-                    c_buf.as_mut_slice(),
+                    c_tmp.expose_mut(),
                 )?;
+                self.c.as_mut_slice().copy_from_slice(c_tmp.expose());
 
-                Ok(Self {
-                    v: v_buf,
-                    c: c_buf,
-                    reseed_counter: 1,
-                })
+                self.reseed_counter = 1;
+                Ok(())
             }
 
             /// NIST SP 800-90A Rev. 1, Section 10.1.1.3: Hash_DRBG_Reseed_algorithm
@@ -543,8 +564,12 @@ mod tests {
         let mut storage: MaybeUninit<HashDRBGSHA256> = MaybeUninit::uninit();
 
         unsafe {
-            let drbg =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            let drbg = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate");
+                d
+            };
             storage.write(drbg);
 
             let v_data_ptr = (&raw const (*storage.as_ptr()).v.data) as *const u8;
@@ -595,8 +620,12 @@ mod tests {
         let mut storage: MaybeUninit<HashDRBGSHA512> = MaybeUninit::uninit();
 
         unsafe {
-            let drbg =
-                HashDRBGSHA512::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            let drbg = {
+                let mut d = HashDRBGSHA512::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate");
+                d
+            };
             storage.write(drbg);
 
             let v_data_ptr = (&raw const (*storage.as_ptr()).v.data) as *const u8;
@@ -625,8 +654,12 @@ mod tests {
         let mut storage: MaybeUninit<HashDRBGSHA256> = MaybeUninit::uninit();
 
         unsafe {
-            let mut drbg =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            let mut drbg = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate");
+                d
+            };
 
             let mut out = [0u8; 64];
             drbg.generate(&mut out, Some(b"ai-1")).expect("generate-1");
@@ -663,10 +696,18 @@ mod tests {
         let nonce = [0x22u8; 16];
 
         unsafe {
-            let mut a =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-a");
-            let mut b =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-b");
+            let mut a = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate-a");
+                d
+            };
+            let mut b = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate-b");
+                d
+            };
 
             let mut out_a = [0u8; 128];
             let mut out_b = [0u8; 128];
@@ -684,10 +725,18 @@ mod tests {
         let nonce = [0x22u8; 16];
 
         unsafe {
-            let mut a =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-a");
-            let mut b =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate-b");
+            let mut a = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate-a");
+                d
+            };
+            let mut b = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate-b");
+                d
+            };
 
             let mut out_empty = [0u8; 64];
             let mut out_none = [0u8; 64];
@@ -709,8 +758,12 @@ mod tests {
         let nonce = [0x44u8; 16];
 
         unsafe {
-            let mut drbg =
-                HashDRBGSHA256::new_from_entropy(&entropy, &nonce, None).expect("instantiate");
+            let mut drbg = {
+                let mut d = HashDRBGSHA256::default();
+                d.init_from_entropy(&entropy, &nonce, None)
+                    .expect("instantiate");
+                d
+            };
 
             let mut out = [0u8; 32];
             drbg.generate(&mut out, None).expect("generate-1"); // counter -> 2

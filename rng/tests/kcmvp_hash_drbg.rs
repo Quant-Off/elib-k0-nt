@@ -122,8 +122,10 @@ macro_rules! impl_drbg_ops {
     ($($t:ty),+) => {$(
         impl DrbgOps for $t {
             fn kat_instantiate(entropy: &[u8], nonce: &[u8], ps: Option<&[u8]>) -> Self {
-                unsafe { <$t>::new_from_entropy(entropy, nonce, ps) }
-                    .expect("KAT instantiate 실패")
+                let mut drbg = <$t>::default();
+                unsafe { drbg.init_from_entropy(entropy, nonce, ps) }
+                    .expect("KAT instantiate 실패");
+                drbg
             }
             fn kat_reseed(&mut self, entropy: &[u8], ai: Option<&[u8]>) {
                 <$t>::reseed(self, entropy, ai).expect("KAT reseed 실패");
