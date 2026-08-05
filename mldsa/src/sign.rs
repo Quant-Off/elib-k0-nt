@@ -240,7 +240,8 @@ pub fn sign_internal<
     m_prime: &[u8],
     rnd: &[u8; 32],
 ) -> Result<[u8; SIG_LEN], Error> {
-    let sk: PrivateKey<K, L> = sk_decode::<K, L, ETA, SK_LEN>(sk_bytes);
+    let mut sk: PrivateKey<K, L> = PrivateKey::default();
+    sk_decode::<K, L, ETA, SK_LEN>(sk_bytes, &mut sk);
 
     let mut s1_hat = sk.s1;
     s1_hat.ntt();

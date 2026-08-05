@@ -174,7 +174,8 @@ fn compute_answers(
         .unwrap();
     let iv = hex_field(block, "IV", params.iv_len, &ctx);
     let aad = hex_field(block, "Adata", params.aad_len, &ctx);
-    let gcm = AES256GCM::new(&key);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&key);
     stats.counts += 1;
 
     match mode {
@@ -495,7 +496,8 @@ fn kcmvp_gcm_self_check() {
     let iv = hex_decode(iv_hex, "self");
     let aad = hex_decode(aad_hex, "self");
     let pt = hex_decode(pt_hex, "self");
-    let gcm = AES256GCM::new(&key);
+    let mut gcm = AES256GCM::default();
+    gcm.init(&key);
     let mut ct = vec![0u8; pt.len()];
     let mut tag = vec![0u8; 14];
     gcm.encrypt_with_iv(&iv, &aad, &pt, &mut ct, &mut tag)

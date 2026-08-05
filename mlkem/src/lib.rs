@@ -13,19 +13,23 @@
 //!
 //! # Examples
 //! ```rust,ignore
-//! use mlkem::{mlkem768_keygen, mlkem768_encaps, mlkem768_decaps};
+//! use mlkem::{MLKEM768KeyPair, mlkem768_keygen, mlkem768_encaps, mlkem768_decaps};
+//! use zeroize::Secret;
 //!
-//! // 1. 키 쌍 생성 (d, z는 32바이트 난수 시드)
+//! // 1. 키 쌍 생성 (d, z는 32바이트 난수 시드, 키는 호출자가 둔 위치에 제자리 기록)
 //! let d = [0u8; 32]; // CSPRNG로 생성 필요
 //! let z = [0u8; 32]; // CSPRNG로 생성 필요
-//! let keypair = mlkem768_keygen(&d, &z);
+//! let mut keypair = MLKEM768KeyPair::default();
+//! mlkem768_keygen(&d, &z, &mut keypair);
 //!
 //! // 2. 캡슐화 (송신자: 공유 비밀 + 암호문 생성)
 //! let m = [0u8; 32]; // CSPRNG로 생성 필요
-//! let (ciphertext, shared_secret_enc) = mlkem768_encaps(&keypair.ek, &m).unwrap();
+//! let mut shared_secret_enc = Secret::new([0u8; 32]);
+//! let ciphertext = mlkem768_encaps(&keypair.ek, &m, &mut shared_secret_enc).unwrap();
 //!
 //! // 3. 역캡슐화 (수신자: 공유 비밀 복원)
-//! let shared_secret_dec = mlkem768_decaps(&ciphertext, keypair.dk.expose());
+//! let mut shared_secret_dec = Secret::new([0u8; 32]);
+//! mlkem768_decaps(&ciphertext, keypair.dk.expose(), &mut shared_secret_dec);
 //!
 //! assert_eq!(shared_secret_enc.expose(), shared_secret_dec.expose());
 //! ```
@@ -92,6 +96,15 @@ pub struct MLKEM512KeyPair {
     pub dk: Secret<[u8; MLKEM512_DK_BYTES]>,
 }
 
+impl Default for MLKEM512KeyPair {
+    fn default() -> Self {
+        Self {
+            ek: [0u8; MLKEM512_EK_BYTES],
+            dk: Secret::new([0u8; MLKEM512_DK_BYTES]),
+        }
+    }
+}
+
 /// ML-KEM-768 키 쌍 구조체
 ///
 /// # Security Note
@@ -101,6 +114,15 @@ pub struct MLKEM768KeyPair {
     pub ek: [u8; MLKEM768_EK_BYTES],
     /// 역캡슐화 키 (비밀 키)
     pub dk: Secret<[u8; MLKEM768_DK_BYTES]>,
+}
+
+impl Default for MLKEM768KeyPair {
+    fn default() -> Self {
+        Self {
+            ek: [0u8; MLKEM768_EK_BYTES],
+            dk: Secret::new([0u8; MLKEM768_DK_BYTES]),
+        }
+    }
 }
 
 /// ML-KEM-1024 키 쌍 구조체
@@ -114,6 +136,15 @@ pub struct MLKEM1024KeyPair {
     pub dk: Secret<[u8; MLKEM1024_DK_BYTES]>,
 }
 
+impl Default for MLKEM1024KeyPair {
+    fn default() -> Self {
+        Self {
+            ek: [0u8; MLKEM1024_EK_BYTES],
+            dk: Secret::new([0u8; MLKEM1024_DK_BYTES]),
+        }
+    }
+}
+
 /// ML-KEM-512 키 쌍을 생성합니다.
 ///
 /// # Arguments
@@ -122,14 +153,9 @@ pub struct MLKEM1024KeyPair {
 ///
 /// # Security Note
 /// `d`와 `z`는 반드시 암호학적으로 안전한 난수 생성기로 생성해야 합니다.
-pub fn mlkem512_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM512KeyPair {
-    let mut ek = [0u8; MLKEM512_EK_BYTES];
-    let mut dk = [0u8; MLKEM512_DK_BYTES];
-    kem::keygen::<2>(&mut ek, &mut dk, d, z, MLKEM512.eta1);
-    MLKEM512KeyPair {
-        ek,
-        dk: Secret::new(dk),
-    }
+pub fn mlkem512_keygen(d: &[u8; 32], z: &[u8; 32], out: &mut MLKEM512KeyPair) {
+    out.dk
+        .init_with(|dk| kem::keygen::<2>(&mut out.ek, dk, d, z, MLKEM512.eta1));
 }
 
 /// ML-KEM-512 캡슐화를 수행합니다.
@@ -139,27 +165,30 @@ pub fn mlkem512_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM512KeyPair {
 /// - `m`: 32바이트 난수 (CSPRNG로 생성 필요)
 ///
 /// # Returns
-/// - 암호문과 공유 비밀 키의 튜플
+/// - 암호문 (공유 비밀은 호출자가 둔 `ss` 에 제자리 기록)
 ///
 /// # Errors
 /// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem512_encaps(
     ek: &[u8; MLKEM512_EK_BYTES],
     m: &[u8; 32],
-) -> Result<([u8; MLKEM512_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) -> Result<[u8; MLKEM512_CT_BYTES], Error> {
     let mut ct = [0u8; MLKEM512_CT_BYTES];
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::encaps::<2>(
-        &mut ct,
-        &mut ss,
-        ek,
-        m,
-        MLKEM512.eta1,
-        MLKEM512.eta2,
-        MLKEM512.du,
-        MLKEM512.dv,
-    )?;
-    Ok((ct, Secret::new(ss)))
+    let mut result = Ok(());
+    ss.init_with(|s| {
+        result = kem::encaps::<2>(
+            &mut ct,
+            s,
+            ek,
+            m,
+            MLKEM512.eta1,
+            MLKEM512.eta2,
+            MLKEM512.du,
+            MLKEM512.dv,
+        );
+    });
+    result.map(|()| ct)
 }
 
 /// ML-KEM-512 역캡슐화를 수행합니다.
@@ -168,26 +197,25 @@ pub fn mlkem512_encaps(
 /// - `ct`: 암호문
 /// - `dk`: 역캡슐화 키 (비밀 키)
 ///
-/// # Returns
-/// - 32바이트 공유 비밀 키
-///
 /// # Security Note
+/// 공유 비밀은 호출자가 둔 `ss` 에 제자리 기록됩니다.
 /// 암호문 변조 시 암묵적 거부(implicit rejection)를 수행합니다.
 pub fn mlkem512_decaps(
     ct: &[u8; MLKEM512_CT_BYTES],
     dk: &[u8; MLKEM512_DK_BYTES],
-) -> Secret<[u8; SHAREDSECRETBYTES]> {
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::decaps::<2>(
-        &mut ss,
-        ct,
-        dk,
-        MLKEM512.eta1,
-        MLKEM512.eta2,
-        MLKEM512.du,
-        MLKEM512.dv,
-    );
-    Secret::new(ss)
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) {
+    ss.init_with(|s| {
+        kem::decaps::<2>(
+            s,
+            ct,
+            dk,
+            MLKEM512.eta1,
+            MLKEM512.eta2,
+            MLKEM512.du,
+            MLKEM512.dv,
+        );
+    });
 }
 
 /// ML-KEM-768 키 쌍을 생성합니다.
@@ -198,14 +226,9 @@ pub fn mlkem512_decaps(
 ///
 /// # Security Note
 /// `d`와 `z`는 반드시 암호학적으로 안전한 난수 생성기로 생성해야 합니다.
-pub fn mlkem768_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM768KeyPair {
-    let mut ek = [0u8; MLKEM768_EK_BYTES];
-    let mut dk = [0u8; MLKEM768_DK_BYTES];
-    kem::keygen::<3>(&mut ek, &mut dk, d, z, MLKEM768.eta1);
-    MLKEM768KeyPair {
-        ek,
-        dk: Secret::new(dk),
-    }
+pub fn mlkem768_keygen(d: &[u8; 32], z: &[u8; 32], out: &mut MLKEM768KeyPair) {
+    out.dk
+        .init_with(|dk| kem::keygen::<3>(&mut out.ek, dk, d, z, MLKEM768.eta1));
 }
 
 /// ML-KEM-768 캡슐화를 수행합니다.
@@ -215,27 +238,30 @@ pub fn mlkem768_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM768KeyPair {
 /// - `m`: 32바이트 난수 (CSPRNG로 생성 필요)
 ///
 /// # Returns
-/// - 암호문과 공유 비밀 키의 튜플
+/// - 암호문 (공유 비밀은 호출자가 둔 `ss` 에 제자리 기록)
 ///
 /// # Errors
 /// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem768_encaps(
     ek: &[u8; MLKEM768_EK_BYTES],
     m: &[u8; 32],
-) -> Result<([u8; MLKEM768_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) -> Result<[u8; MLKEM768_CT_BYTES], Error> {
     let mut ct = [0u8; MLKEM768_CT_BYTES];
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::encaps::<3>(
-        &mut ct,
-        &mut ss,
-        ek,
-        m,
-        MLKEM768.eta1,
-        MLKEM768.eta2,
-        MLKEM768.du,
-        MLKEM768.dv,
-    )?;
-    Ok((ct, Secret::new(ss)))
+    let mut result = Ok(());
+    ss.init_with(|s| {
+        result = kem::encaps::<3>(
+            &mut ct,
+            s,
+            ek,
+            m,
+            MLKEM768.eta1,
+            MLKEM768.eta2,
+            MLKEM768.du,
+            MLKEM768.dv,
+        );
+    });
+    result.map(|()| ct)
 }
 
 /// ML-KEM-768 역캡슐화를 수행합니다.
@@ -244,26 +270,25 @@ pub fn mlkem768_encaps(
 /// - `ct`: 암호문
 /// - `dk`: 역캡슐화 키 (비밀 키)
 ///
-/// # Returns
-/// - 32바이트 공유 비밀 키
-///
 /// # Security Note
+/// 공유 비밀은 호출자가 둔 `ss` 에 제자리 기록됩니다.
 /// 암호문 변조 시 암묵적 거부(implicit rejection)를 수행합니다.
 pub fn mlkem768_decaps(
     ct: &[u8; MLKEM768_CT_BYTES],
     dk: &[u8; MLKEM768_DK_BYTES],
-) -> Secret<[u8; SHAREDSECRETBYTES]> {
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::decaps::<3>(
-        &mut ss,
-        ct,
-        dk,
-        MLKEM768.eta1,
-        MLKEM768.eta2,
-        MLKEM768.du,
-        MLKEM768.dv,
-    );
-    Secret::new(ss)
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) {
+    ss.init_with(|s| {
+        kem::decaps::<3>(
+            s,
+            ct,
+            dk,
+            MLKEM768.eta1,
+            MLKEM768.eta2,
+            MLKEM768.du,
+            MLKEM768.dv,
+        );
+    });
 }
 
 /// ML-KEM-1024 키 쌍을 생성합니다.
@@ -274,14 +299,9 @@ pub fn mlkem768_decaps(
 ///
 /// # Security Note
 /// `d`와 `z`는 반드시 암호학적으로 안전한 난수 생성기로 생성해야 합니다.
-pub fn mlkem1024_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM1024KeyPair {
-    let mut ek = [0u8; MLKEM1024_EK_BYTES];
-    let mut dk = [0u8; MLKEM1024_DK_BYTES];
-    kem::keygen::<4>(&mut ek, &mut dk, d, z, MLKEM1024.eta1);
-    MLKEM1024KeyPair {
-        ek,
-        dk: Secret::new(dk),
-    }
+pub fn mlkem1024_keygen(d: &[u8; 32], z: &[u8; 32], out: &mut MLKEM1024KeyPair) {
+    out.dk
+        .init_with(|dk| kem::keygen::<4>(&mut out.ek, dk, d, z, MLKEM1024.eta1));
 }
 
 /// ML-KEM-1024 캡슐화를 수행합니다.
@@ -291,27 +311,30 @@ pub fn mlkem1024_keygen(d: &[u8; 32], z: &[u8; 32]) -> MLKEM1024KeyPair {
 /// - `m`: 32바이트 난수 (CSPRNG로 생성 필요)
 ///
 /// # Returns
-/// - 암호문과 공유 비밀 키의 튜플
+/// - 암호문 (공유 비밀은 호출자가 둔 `ss` 에 제자리 기록)
 ///
 /// # Errors
 /// - `Error::InvalidEncapsulationKey`: `ek` 계수가 비정규(q 이상)일 때 (FIPS 203 7.2 모듈러스 검사)
 pub fn mlkem1024_encaps(
     ek: &[u8; MLKEM1024_EK_BYTES],
     m: &[u8; 32],
-) -> Result<([u8; MLKEM1024_CT_BYTES], Secret<[u8; SHAREDSECRETBYTES]>), Error> {
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) -> Result<[u8; MLKEM1024_CT_BYTES], Error> {
     let mut ct = [0u8; MLKEM1024_CT_BYTES];
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::encaps::<4>(
-        &mut ct,
-        &mut ss,
-        ek,
-        m,
-        MLKEM1024.eta1,
-        MLKEM1024.eta2,
-        MLKEM1024.du,
-        MLKEM1024.dv,
-    )?;
-    Ok((ct, Secret::new(ss)))
+    let mut result = Ok(());
+    ss.init_with(|s| {
+        result = kem::encaps::<4>(
+            &mut ct,
+            s,
+            ek,
+            m,
+            MLKEM1024.eta1,
+            MLKEM1024.eta2,
+            MLKEM1024.du,
+            MLKEM1024.dv,
+        );
+    });
+    result.map(|()| ct)
 }
 
 /// ML-KEM-1024 역캡슐화를 수행합니다.
@@ -320,26 +343,25 @@ pub fn mlkem1024_encaps(
 /// - `ct`: 암호문
 /// - `dk`: 역캡슐화 키 (비밀 키)
 ///
-/// # Returns
-/// - 32바이트 공유 비밀 키
-///
 /// # Security Note
+/// 공유 비밀은 호출자가 둔 `ss` 에 제자리 기록됩니다.
 /// 암호문 변조 시 암묵적 거부(implicit rejection)를 수행합니다.
 pub fn mlkem1024_decaps(
     ct: &[u8; MLKEM1024_CT_BYTES],
     dk: &[u8; MLKEM1024_DK_BYTES],
-) -> Secret<[u8; SHAREDSECRETBYTES]> {
-    let mut ss = [0u8; SHAREDSECRETBYTES];
-    kem::decaps::<4>(
-        &mut ss,
-        ct,
-        dk,
-        MLKEM1024.eta1,
-        MLKEM1024.eta2,
-        MLKEM1024.du,
-        MLKEM1024.dv,
-    );
-    Secret::new(ss)
+    ss: &mut Secret<[u8; SHAREDSECRETBYTES]>,
+) {
+    ss.init_with(|s| {
+        kem::decaps::<4>(
+            s,
+            ct,
+            dk,
+            MLKEM1024.eta1,
+            MLKEM1024.eta2,
+            MLKEM1024.du,
+            MLKEM1024.dv,
+        );
+    });
 }
 
 #[cfg(test)]
@@ -581,9 +603,12 @@ mod tests {
         let z = [2u8; 32];
         let m = [3u8; 32];
 
-        let keypair = mlkem512_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem512_encaps(&keypair.ek, &m).unwrap();
-        let ss_dec = mlkem512_decaps(&ct, keypair.dk.expose());
+        let mut keypair = MLKEM512KeyPair::default();
+        mlkem512_keygen(&d, &z, &mut keypair);
+        let mut ss_enc = Secret::new([0u8; 32]);
+        let ct = mlkem512_encaps(&keypair.ek, &m, &mut ss_enc).unwrap();
+        let mut ss_dec = Secret::new([0u8; 32]);
+        mlkem512_decaps(&ct, keypair.dk.expose(), &mut ss_dec);
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());
     }
@@ -594,9 +619,12 @@ mod tests {
         let z = [5u8; 32];
         let m = [6u8; 32];
 
-        let keypair = mlkem768_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem768_encaps(&keypair.ek, &m).unwrap();
-        let ss_dec = mlkem768_decaps(&ct, keypair.dk.expose());
+        let mut keypair = MLKEM768KeyPair::default();
+        mlkem768_keygen(&d, &z, &mut keypair);
+        let mut ss_enc = Secret::new([0u8; 32]);
+        let ct = mlkem768_encaps(&keypair.ek, &m, &mut ss_enc).unwrap();
+        let mut ss_dec = Secret::new([0u8; 32]);
+        mlkem768_decaps(&ct, keypair.dk.expose(), &mut ss_dec);
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());
     }
@@ -607,9 +635,12 @@ mod tests {
         let z = [8u8; 32];
         let m = [9u8; 32];
 
-        let keypair = mlkem1024_keygen(&d, &z);
-        let (ct, ss_enc) = mlkem1024_encaps(&keypair.ek, &m).unwrap();
-        let ss_dec = mlkem1024_decaps(&ct, keypair.dk.expose());
+        let mut keypair = MLKEM1024KeyPair::default();
+        mlkem1024_keygen(&d, &z, &mut keypair);
+        let mut ss_enc = Secret::new([0u8; 32]);
+        let ct = mlkem1024_encaps(&keypair.ek, &m, &mut ss_enc).unwrap();
+        let mut ss_dec = Secret::new([0u8; 32]);
+        mlkem1024_decaps(&ct, keypair.dk.expose(), &mut ss_dec);
 
         assert_eq!(ss_enc.expose(), ss_dec.expose());
     }

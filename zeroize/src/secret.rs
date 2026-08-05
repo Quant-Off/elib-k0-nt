@@ -69,6 +69,43 @@ impl<T: Zeroable> Secret<T> {
     pub fn expose_mut(&mut self) -> &mut T {
         &mut self.inner
     }
+
+    /// 기존 내용을 소거한 뒤 내부 데이터를 제자리에서 초기화합니다.
+    ///
+    /// 비밀 값을 by-value로 옮기지 않고 최종 저장 위치에 직접 기록하므로
+    /// move 로 인한 스택 사본 잔류가 발생하지 않습니다.
+    ///
+    /// # Arguments
+    /// - `f`: 소거된 내부 데이터를 받아 새 값을 기록하는 클로저
+    ///
+    /// # Security Note
+    /// `Secret::new(value)`는 `value`가 이동하며 원본 스택 슬롯에
+    /// 사본을 남깁니다. 비밀이 이미 실체화된 값은 이 API로 기록하고,
+    /// `new`는 0 등 비밀이 아닌 초기값 생성에만 사용하세요.
+    #[inline]
+    pub fn init_with<F: FnOnce(&mut T)>(&mut self, f: F) {
+        self.wipe();
+        f(&mut self.inner);
+    }
+
+    #[inline]
+    fn wipe(&mut self) {
+        compiler_barrier();
+
+        let size = size_of::<T>();
+        let p = &mut self.inner as *mut T as *mut u8;
+        for i in 0..size {
+            unsafe {
+                ptr::write_volatile(p.add(i), 0);
+            }
+        }
+
+        compiler_barrier();
+        atomic_compiler_fence();
+        memory_barrier();
+
+        black_box(p);
+    }
 }
 
 impl<T: Copy + Zeroable> Secret<T> {
@@ -85,20 +122,7 @@ impl<T: Copy + Zeroable> Secret<T> {
     #[inline]
     pub fn into_inner(mut self) -> T {
         let inner = self.inner;
-
-        compiler_barrier();
-        let size = mem::size_of::<T>();
-        let p = &mut self.inner as *mut T as *mut u8;
-        for i in 0..size {
-            unsafe {
-                ptr::write_volatile(p.add(i), 0);
-            }
-        }
-        compiler_barrier();
-        atomic_compiler_fence();
-        memory_barrier();
-        black_box(p);
-
+        self.wipe();
         mem::forget(self);
         inner
     }
@@ -123,22 +147,7 @@ impl<T: Zeroable> DerefMut for Secret<T> {
 impl<T: Zeroable> Drop for Secret<T> {
     #[inline]
     fn drop(&mut self) {
-        compiler_barrier();
-
-        let size = size_of::<T>();
-        let p = &mut self.inner as *mut T as *mut u8;
-
-        for i in 0..size {
-            unsafe {
-                ptr::write_volatile(p.add(i), 0);
-            }
-        }
-
-        compiler_barrier();
-        atomic_compiler_fence();
-        memory_barrier();
-
-        black_box(p);
+        self.wipe();
     }
 }
 

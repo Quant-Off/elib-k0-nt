@@ -46,16 +46,15 @@ impl FieldElement {
         FieldElement(limbs)
     }
 
-    pub fn to_bytes(&self) -> [u8; 32] {
-        let t = self.reduce();
-        let mut bytes = [0u8; 32];
+    pub fn to_bytes_into(&self, out: &mut [u8; 32]) {
+        let mut t = self.reduce();
 
         let mut acc: u128 = t.0[0] as u128;
         acc |= (t.0[1] as u128) << 51;
         acc |= (t.0[2] as u128) << 102;
 
         for i in 0..16 {
-            bytes[i] = (acc >> (i * 8)) as u8;
+            out[i] = (acc >> (i * 8)) as u8;
         }
 
         acc = (t.0[2] >> 26) as u128;
@@ -63,10 +62,11 @@ impl FieldElement {
         acc |= (t.0[4] as u128) << 76;
 
         for i in 0..16 {
-            bytes[16 + i] = (acc >> (i * 8)) as u8;
+            out[16 + i] = (acc >> (i * 8)) as u8;
         }
 
-        bytes
+        t.zeroize();
+        acc.zeroize();
     }
 
     #[inline]

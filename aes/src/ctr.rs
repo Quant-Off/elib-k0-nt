@@ -15,16 +15,18 @@ fn inc32(block: &mut [u8; 16]) {
     }
 }
 
+#[derive(Default)]
 pub struct AES256CTR {
     cipher: AES256,
 }
 
 impl AES256CTR {
-    #[must_use]
-    pub fn new(key: &[u8; 32]) -> Self {
-        Self {
-            cipher: AES256::new(key),
-        }
+    /// 256비트 키를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    pub fn init(&mut self, key: &[u8; 32]) {
+        self.cipher.init(key);
     }
 
     fn apply_internal(&self, counter: &mut [u8; 16], input: &[u8], output: &mut [u8]) {
@@ -140,7 +142,8 @@ mod tests {
             0x13, 0xc2, 0xdd, 0x08, 0x45, 0x79, 0x41, 0xa6,
         ];
 
-        let ctr = AES256CTR::new(&key);
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
         let mut ciphertext = [0u8; 64];
         ctr.apply_iv(&iv, &plaintext, &mut ciphertext).unwrap();
         assert_eq!(ciphertext, expected_ciphertext);
@@ -156,7 +159,8 @@ mod tests {
         let nonce: [u8; 12] = [0x01u8; 12];
         let plaintext: [u8; 20] = [0xAAu8; 20];
 
-        let ctr = AES256CTR::new(&key);
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
         let mut ciphertext = [0u8; 20];
         ctr.encrypt(&nonce, &plaintext, &mut ciphertext).unwrap();
 
@@ -171,7 +175,8 @@ mod tests {
         let nonce = [0x22u8; 12];
         let input = [0x33u8; 32];
 
-        let ctr = AES256CTR::new(&key);
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
         let mut output = [0u8; 16];
         let result = ctr.apply(&nonce, &input, &mut output);
         assert_eq!(result, Err(Error::BufferTooSmall));

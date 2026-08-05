@@ -10,6 +10,7 @@
 //! - decaps: `(dk, c)` 로부터 공유 비밀 `k` 검증 (정상 복호화 및 변조 암호문 암묵적 거부 포함)
 
 use mlkem::*;
+use zeroize::Secret;
 
 fn unhex(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
@@ -69,7 +70,8 @@ fn kat_mlkem512_keygen() {
     for (d, z, ek, dk) in cases {
         let d: [u8; 32] = unhex(d).try_into().unwrap();
         let z: [u8; 32] = unhex(z).try_into().unwrap();
-        let kp = mlkem512_keygen(&d, &z);
+        let mut kp = MLKEM512KeyPair::default();
+        mlkem512_keygen(&d, &z, &mut kp);
         assert_eq!(&kp.ek[..], &unhex(ek)[..], "ek 불일치");
         assert_eq!(&kp.dk.expose()[..], &unhex(dk)[..], "dk 불일치");
     }
@@ -113,7 +115,8 @@ fn kat_mlkem512_encaps() {
     for (ek, m, c, k) in cases {
         let ek: [u8; 800] = unhex(ek).try_into().unwrap();
         let m: [u8; 32] = unhex(m).try_into().unwrap();
-        let (ct, ss) = mlkem512_encaps(&ek, &m).unwrap();
+        let mut ss = Secret::new([0u8; 32]);
+        let ct = mlkem512_encaps(&ek, &m, &mut ss).unwrap();
         assert_eq!(&ct[..], &unhex(c)[..], "암호문 c 불일치");
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
@@ -187,7 +190,8 @@ fn kat_mlkem512_decaps() {
     for (dk, c, k) in cases {
         let dk: [u8; 1632] = unhex(dk).try_into().unwrap();
         let c: [u8; 768] = unhex(c).try_into().unwrap();
-        let ss = mlkem512_decaps(&c, &dk);
+        let mut ss = Secret::new([0u8; 32]);
+        mlkem512_decaps(&c, &dk, &mut ss);
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
 }
@@ -200,7 +204,7 @@ fn kat_mlkem512_rejects_malformed_ek() {
     let m = [0u8; 32];
     assert!(
         matches!(
-            mlkem512_encaps(&ek, &m),
+            mlkem512_encaps(&ek, &m, &mut Secret::new([0u8; 32])),
             Err(Error::InvalidEncapsulationKey)
         ),
         "비정규 ek 미거부"
@@ -245,7 +249,8 @@ fn kat_mlkem768_keygen() {
     for (d, z, ek, dk) in cases {
         let d: [u8; 32] = unhex(d).try_into().unwrap();
         let z: [u8; 32] = unhex(z).try_into().unwrap();
-        let kp = mlkem768_keygen(&d, &z);
+        let mut kp = MLKEM768KeyPair::default();
+        mlkem768_keygen(&d, &z, &mut kp);
         assert_eq!(&kp.ek[..], &unhex(ek)[..], "ek 불일치");
         assert_eq!(&kp.dk.expose()[..], &unhex(dk)[..], "dk 불일치");
     }
@@ -289,7 +294,8 @@ fn kat_mlkem768_encaps() {
     for (ek, m, c, k) in cases {
         let ek: [u8; 1184] = unhex(ek).try_into().unwrap();
         let m: [u8; 32] = unhex(m).try_into().unwrap();
-        let (ct, ss) = mlkem768_encaps(&ek, &m).unwrap();
+        let mut ss = Secret::new([0u8; 32]);
+        let ct = mlkem768_encaps(&ek, &m, &mut ss).unwrap();
         assert_eq!(&ct[..], &unhex(c)[..], "암호문 c 불일치");
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
@@ -363,7 +369,8 @@ fn kat_mlkem768_decaps() {
     for (dk, c, k) in cases {
         let dk: [u8; 2400] = unhex(dk).try_into().unwrap();
         let c: [u8; 1088] = unhex(c).try_into().unwrap();
-        let ss = mlkem768_decaps(&c, &dk);
+        let mut ss = Secret::new([0u8; 32]);
+        mlkem768_decaps(&c, &dk, &mut ss);
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
 }
@@ -376,7 +383,7 @@ fn kat_mlkem768_rejects_malformed_ek() {
     let m = [0u8; 32];
     assert!(
         matches!(
-            mlkem768_encaps(&ek, &m),
+            mlkem768_encaps(&ek, &m, &mut Secret::new([0u8; 32])),
             Err(Error::InvalidEncapsulationKey)
         ),
         "비정규 ek 미거부"
@@ -421,7 +428,8 @@ fn kat_mlkem1024_keygen() {
     for (d, z, ek, dk) in cases {
         let d: [u8; 32] = unhex(d).try_into().unwrap();
         let z: [u8; 32] = unhex(z).try_into().unwrap();
-        let kp = mlkem1024_keygen(&d, &z);
+        let mut kp = MLKEM1024KeyPair::default();
+        mlkem1024_keygen(&d, &z, &mut kp);
         assert_eq!(&kp.ek[..], &unhex(ek)[..], "ek 불일치");
         assert_eq!(&kp.dk.expose()[..], &unhex(dk)[..], "dk 불일치");
     }
@@ -465,7 +473,8 @@ fn kat_mlkem1024_encaps() {
     for (ek, m, c, k) in cases {
         let ek: [u8; 1568] = unhex(ek).try_into().unwrap();
         let m: [u8; 32] = unhex(m).try_into().unwrap();
-        let (ct, ss) = mlkem1024_encaps(&ek, &m).unwrap();
+        let mut ss = Secret::new([0u8; 32]);
+        let ct = mlkem1024_encaps(&ek, &m, &mut ss).unwrap();
         assert_eq!(&ct[..], &unhex(c)[..], "암호문 c 불일치");
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
@@ -539,7 +548,8 @@ fn kat_mlkem1024_decaps() {
     for (dk, c, k) in cases {
         let dk: [u8; 3168] = unhex(dk).try_into().unwrap();
         let c: [u8; 1568] = unhex(c).try_into().unwrap();
-        let ss = mlkem1024_decaps(&c, &dk);
+        let mut ss = Secret::new([0u8; 32]);
+        mlkem1024_decaps(&c, &dk, &mut ss);
         assert_eq!(&ss.expose()[..], &unhex(k)[..], "공유 비밀 k 불일치");
     }
 }
@@ -552,7 +562,7 @@ fn kat_mlkem1024_rejects_malformed_ek() {
     let m = [0u8; 32];
     assert!(
         matches!(
-            mlkem1024_encaps(&ek, &m),
+            mlkem1024_encaps(&ek, &m, &mut Secret::new([0u8; 32])),
             Err(Error::InvalidEncapsulationKey)
         ),
         "비정규 ek 미거부"

@@ -71,7 +71,8 @@ fn kat_a1_chacha20_block() {
     for (key, nonce, counter, keystream) in cases {
         let key: [u8; 32] = unhex(key).try_into().unwrap();
         let nonce: [u8; 12] = unhex(nonce).try_into().unwrap();
-        let mut chacha = ChaCha20Core::new_with_counter(&key, &nonce, *counter);
+        let mut chacha = ChaCha20Core::default();
+        chacha.init_with_counter(&key, &nonce, *counter);
         let block = chacha.keystream_block();
         assert_eq!(&block[..], &unhex(keystream)[..], "키스트림 불일치");
     }
@@ -107,7 +108,8 @@ fn kat_a2_chacha20_encrypt() {
         let key: [u8; 32] = unhex(key).try_into().unwrap();
         let nonce: [u8; 12] = unhex(nonce).try_into().unwrap();
         let mut buf = unhex(plaintext);
-        let mut chacha = ChaCha20Core::new_with_counter(&key, &nonce, *counter);
+        let mut chacha = ChaCha20Core::default();
+        chacha.init_with_counter(&key, &nonce, *counter);
         chacha.apply_keystream(&mut buf);
         assert_eq!(&buf[..], &unhex(ciphertext)[..], "암호문 불일치");
     }
@@ -175,7 +177,8 @@ fn kat_a3_poly1305() {
     ];
     for (otk, text, tag) in cases {
         let otk: [u8; 32] = unhex(otk).try_into().unwrap();
-        let mut poly = Poly1305Core::new(&otk);
+        let mut poly = Poly1305Core::default();
+        poly.init(&otk);
         poly.update(&unhex(text));
         let computed = poly.finalize();
         assert_eq!(&computed[..], &unhex(tag)[..], "태그 불일치");
@@ -205,7 +208,8 @@ fn kat_a4_poly1305_keygen() {
     for (key, nonce, otk) in cases {
         let key: [u8; 32] = unhex(key).try_into().unwrap();
         let nonce: [u8; 12] = unhex(nonce).try_into().unwrap();
-        let mut chacha = ChaCha20Core::new(&key, &nonce);
+        let mut chacha = ChaCha20Core::default();
+        chacha.init(&key, &nonce);
         let poly_key = chacha.generate_poly1305_key();
         assert_eq!(&poly_key[..], &unhex(otk)[..], "Poly1305 일회용 키 불일치");
     }
@@ -228,7 +232,8 @@ fn kat_a5_aead_decrypt() {
         "496e7465726e65742d4472616674732061726520647261667420646f63756d656e74732076616c696420666f722061206d6178696d756d206f6620736978206d6f6e74687320616e64206d617920626520757064617465642c207265706c616365642c206f72206f62736f6c65746564206279206f7468657220646f63756d656e747320617420616e792074696d652e20497420697320696e617070726f70726961746520746f2075736520496e7465726e65742d447261667473206173207265666572656e6365206d6174657269616c206f7220746f2063697465207468656d206f74686572207468616e206173202fe2809c776f726b20696e2070726f67726573732e2fe2809d",
     );
 
-    let aead = ChaCha20Poly1305::new(&key);
+    let mut aead = ChaCha20Poly1305::default();
+    aead.init(&key);
 
     let mut plaintext = vec![0u8; ciphertext.len()];
     aead.decrypt(&nonce, &aad, &ciphertext, &tag, &mut plaintext)
@@ -263,7 +268,8 @@ fn kat_a3_poly1305_chunked_update() {
     );
     let expected_tag = unhex("36e5f6b5c5e06070f0efca96227a863e");
 
-    let mut poly = Poly1305Core::new(&otk);
+    let mut poly = Poly1305Core::default();
+    poly.init(&otk);
     let mut offset = 0;
     for chunk in [1usize, 15, 17, 100, 3, 64] {
         poly.update(&text[offset..offset + chunk]);
@@ -285,7 +291,8 @@ fn kat_a2_chacha20_chunked_keystream() {
         "416e79207375626d697373696f6e20746f20746865204945544620696e74656e6465642062792074686520436f6e7472696275746f7220666f72207075626c69636174696f6e20617320616c6c206f722070617274206f6620616e204945544620496e7465726e65742d4472616674206f722052464320616e6420616e792073746174656d656e74206d6164652077697468696e2074686520636f6e74657874206f6620616e204945544620616374697669747920697320636f6e7369646572656420616e20224945544620436f6e747269627574696f6e222e20537563682073746174656d656e747320696e636c756465206f72616c2073746174656d656e747320696e20494554462073657373696f6e732c2061732077656c6c206173207772697474656e20616e6420656c656374726f6e696320636f6d6d756e69636174696f6e73206d61646520617420616e792074696d65206f7220706c6163652c207768696368206172652061646472657373656420746f",
     );
 
-    let mut chacha = ChaCha20Core::new_with_counter(&key, &nonce, 1);
+    let mut chacha = ChaCha20Core::default();
+    chacha.init_with_counter(&key, &nonce, 1);
     let (head, tail) = buf.split_at_mut(320);
     chacha.apply_keystream(&mut head[..64]);
     chacha.apply_keystream(&mut head[64..]);

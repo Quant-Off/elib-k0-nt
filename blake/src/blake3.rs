@@ -1,7 +1,7 @@
 //! BLAKE3 코어 구현 모듈입니다.
 //! BLAKE3 명세(https://github.com/BLAKE3-team/BLAKE3-specs)를 준수합니다.
 
-use zeroize::{Secret, Zeroize};
+use zeroize::{Secret, Zeroable, Zeroize, zeroize_flat};
 
 use crate::{HashError, SecureBuffer};
 
@@ -143,14 +143,21 @@ impl Default for Blake3 {
     }
 }
 
+// # Safety
+// Blake3 의 모든 필드(Secret 래핑 정수 배열, usize, u32, ChunkState)는
+// all-zero 비트 패턴이 유효한 값이다
+unsafe impl Zeroable for Blake3 {}
+
 impl Zeroize for Blake3 {
+    /// 필드 사이 패딩까지 포함해 구조체 전체 바이트를 소거합니다.
+    ///
+    /// # Security Note
+    /// 필드별 소거는 정렬 패딩(Blake3 4바이트, ChunkState 3바이트)을 남깁니다.
+    /// 구조체 대입 시 패딩에 이전 비밀 잔재가 복사될 수 있으므로
+    /// byte-extent 전체를 휘발성 쓰기로 덮습니다.
     #[inline]
     fn zeroize(&mut self) {
-        self.key_words.zeroize();
-        self.cv_stack.zeroize();
-        self.chunk_state.zeroize();
-        self.flags.zeroize();
-        self.cv_stack_len.zeroize();
+        zeroize_flat(self);
     }
 }
 
@@ -243,15 +250,15 @@ impl ChunkState {
     }
 }
 
+// # Safety
+// ChunkState 의 모든 필드는 all-zero 비트 패턴이 유효한 값이다
+unsafe impl Zeroable for ChunkState {}
+
 impl Zeroize for ChunkState {
+    /// 필드 사이 패딩까지 포함해 구조체 전체 바이트를 소거합니다.
     #[inline]
     fn zeroize(&mut self) {
-        self.chaining_value.zeroize();
-        self.buf.zeroize();
-        self.chunk_counter.zeroize();
-        self.buf_len.zeroize();
-        self.blocks_compressed.zeroize();
-        self.flags.zeroize();
+        zeroize_flat(self);
     }
 }
 

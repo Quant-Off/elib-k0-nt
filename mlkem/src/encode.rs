@@ -47,7 +47,7 @@ pub fn poly_tomsg(r: &mut [u8; 32], a: &Poly) {
         *byte = 0;
         for j in 0..8 {
             let t = freeze(a.coeffs[8 * i + j]) as u16;
-            let d = ((((t as u32) << 1) + Q as u32 / 2) / Q as u32) & 1;
+            let d = ((((t as u32) << 1) + 1665).wrapping_mul(80635) >> 28) & 1;
             *byte |= (d as u8) << j;
         }
     }

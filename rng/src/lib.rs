@@ -57,6 +57,16 @@ pub(crate) struct SecureBuffer {
     len: usize,
 }
 
+impl Default for SecureBuffer {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            data: [0u8; MAX_SECURE_BUFFER_LEN],
+            len: 0,
+        }
+    }
+}
+
 impl SecureBuffer {
     #[inline]
     pub fn new_owned(len: usize) -> Result<Self, DrbgError> {
@@ -67,6 +77,23 @@ impl SecureBuffer {
             data: [0u8; MAX_SECURE_BUFFER_LEN],
             len,
         })
+    }
+
+    /// 기존 내용을 소거한 뒤 활성 길이를 제자리에서 재설정합니다.
+    ///
+    /// # Arguments
+    /// - `len`: 새 활성 길이
+    ///
+    /// # Errors
+    /// - `DrbgError::InvalidArgument`: `len` 이 backing storage 크기를 초과
+    #[inline]
+    pub fn init(&mut self, len: usize) -> Result<(), DrbgError> {
+        if len > MAX_SECURE_BUFFER_LEN {
+            return Err(DrbgError::InvalidArgument);
+        }
+        self.zeroize();
+        self.len = len;
+        Ok(())
     }
 
     #[inline]

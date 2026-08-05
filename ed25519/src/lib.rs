@@ -11,8 +11,9 @@
 //! ```rust,ignore
 //! use ed25519::{SecretKey, PublicKey, sign, verify};
 //!
-//! // 키 생성
-//! let secret = SecretKey::from_bytes(&seed);
+//! // 키 생성 (제자리 초기화로 move 잔류 방지)
+//! let mut secret = SecretKey::default();
+//! secret.init(&seed);
 //! let public = PublicKey::from(&secret);
 //!
 //! // 서명
@@ -59,13 +60,22 @@ pub enum Ed25519Error {
 /// Ed25519 비밀키 (32바이트 시드)입니다.
 ///
 /// Drop 시 내부 데이터가 `Secret` 의 Drop 으로 자동 소거됩니다.
+#[derive(Default)]
 pub struct SecretKey(Secret<[u8; SECRET_KEY_LENGTH]>);
 
 impl SecretKey {
-    /// 32바이트 시드에서 비밀키를 생성합니다.
+    /// 32바이트 시드를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `bytes`: 32바이트 시드
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// move 로 인한 시드 스택 잔류가 없습니다. 입력 버퍼는 호출자가
+    /// 사용 후 직접 소거해야 합니다.
     #[inline]
-    pub fn from_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Self {
-        SecretKey(Secret::new(*bytes))
+    pub fn init(&mut self, bytes: &[u8; SECRET_KEY_LENGTH]) {
+        self.0.init_with(|k| *k = *bytes);
     }
 
     /// 바이트 배열 참조를 반환합니다.
@@ -74,17 +84,17 @@ impl SecretKey {
         self.0.expose()
     }
 
-    /// 확장 비밀키를 계산합니다.
-    fn expand(&self) -> ExpandedSecretKey {
+    /// 확장 비밀키를 호출자가 둔 `out` 에 제자리에서 계산합니다.
+    fn expand_into(&self, out: &mut ExpandedSecretKey) {
         let mut h = SHA512::new();
         h.update(self.0.expose());
         let hash = h.finalize();
         let hash_bytes = hash.as_bytes();
 
         let mut lower = Secret::new([0u8; 32]);
-        let mut upper = Secret::new([0u8; 32]);
         lower.expose_mut().copy_from_slice(&hash_bytes[..32]);
-        upper.expose_mut().copy_from_slice(&hash_bytes[32..]);
+        out.nonce
+            .init_with(|n| n.copy_from_slice(&hash_bytes[32..]));
 
         // RFC 8032: 비트 클램핑
         {
@@ -94,18 +104,8 @@ impl SecretKey {
             lo[31] |= 64; // 254번째 비트 설정
         }
 
-        let scalar = Scalar::from_bytes(*lower.expose());
+        out.scalar = Scalar::from_bytes(*lower.expose());
         // lower 는 스코프 종료 시 Secret::Drop 으로 자동 소거
-        ExpandedSecretKey {
-            scalar,
-            nonce: upper,
-        }
-    }
-}
-
-impl Clone for SecretKey {
-    fn clone(&self) -> Self {
-        SecretKey(Secret::new(*self.0.expose()))
     }
 }
 
@@ -113,6 +113,15 @@ impl Clone for SecretKey {
 struct ExpandedSecretKey {
     scalar: Scalar,
     nonce: Secret<[u8; 32]>,
+}
+
+impl Default for ExpandedSecretKey {
+    fn default() -> Self {
+        Self {
+            scalar: Scalar::zero(),
+            nonce: Secret::new([0u8; 32]),
+        }
+    }
 }
 
 impl Drop for ExpandedSecretKey {
@@ -124,7 +133,7 @@ impl Drop for ExpandedSecretKey {
 }
 
 /// Ed25519 공개키 (32바이트)입니다.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct PublicKey([u8; PUBLIC_KEY_LENGTH]);
 
 impl PublicKey {
@@ -149,7 +158,8 @@ impl PublicKey {
 impl From<&SecretKey> for PublicKey {
     /// 비밀키에서 공개키를 유도합니다.
     fn from(secret: &SecretKey) -> Self {
-        let expanded = secret.expand();
+        let mut expanded = ExpandedSecretKey::default();
+        secret.expand_into(&mut expanded);
         let point = EdwardsPoint::basepoint_mul(&expanded.scalar);
         PublicKey(point.to_bytes())
     }
@@ -195,7 +205,8 @@ impl Signature {
 /// 비밀 nonce r, 비밀 스칼라 a, 그리고 모든 중간 해시 출력은 함수 종료 전
 /// `Secret` Drop 또는 명시적 `zeroize()` 호출로 소거됩니다.
 pub fn sign(message: &[u8], secret_key: &SecretKey) -> Signature {
-    let expanded = secret_key.expand();
+    let mut expanded = ExpandedSecretKey::default();
+    secret_key.expand_into(&mut expanded);
     // 공개키 A 는 이미 계산한 확장 스칼라에서 직접 유도 (expand 중복 호출 제거)
     let public_key = PublicKey(EdwardsPoint::basepoint_mul(&expanded.scalar).to_bytes());
 
@@ -292,17 +303,24 @@ pub fn verify(
 }
 
 /// 키페어 (비밀키 + 공개키)입니다.
+#[derive(Default)]
 pub struct Keypair {
     pub secret: SecretKey,
     pub public: PublicKey,
 }
 
 impl Keypair {
-    /// 32바이트 시드에서 키페어를 생성합니다.
-    pub fn from_seed(seed: &[u8; 32]) -> Self {
-        let secret = SecretKey::from_bytes(seed);
-        let public = PublicKey::from(&secret);
-        Keypair { secret, public }
+    /// 32바이트 시드로 키페어를 제자리에서 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `seed`: 32바이트 시드
+    ///
+    /// # Security Note
+    /// `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면 move 로 인한
+    /// 비밀키 스택 잔류가 없습니다.
+    pub fn init(&mut self, seed: &[u8; 32]) {
+        self.secret.init(seed);
+        self.public = PublicKey::from(&self.secret);
     }
 
     /// 메시지에 서명합니다.
@@ -451,7 +469,8 @@ mod tests {
     #[test]
     fn test_sign_verify_roundtrip() {
         let seed = [42u8; 32];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         let message = b"test message";
 
         let signature = keypair.sign(message);
@@ -462,7 +481,8 @@ mod tests {
     #[test]
     fn test_wrong_message() {
         let seed = [42u8; 32];
-        let keypair = Keypair::from_seed(&seed);
+        let mut keypair = Keypair::default();
+        keypair.init(&seed);
         let message = b"test message";
         let wrong_message = b"wrong message";
 
@@ -474,8 +494,10 @@ mod tests {
     fn test_wrong_key() {
         let seed1 = [1u8; 32];
         let seed2 = [2u8; 32];
-        let keypair1 = Keypair::from_seed(&seed1);
-        let keypair2 = Keypair::from_seed(&seed2);
+        let mut keypair1 = Keypair::default();
+        keypair1.init(&seed1);
+        let mut keypair2 = Keypair::default();
+        keypair2.init(&seed2);
         let message = b"test message";
 
         let signature = keypair1.sign(message);
@@ -498,7 +520,8 @@ mod tests {
         let exp_pk = decode_hex::<32>(pk_h);
         let exp_sig = decode_hex::<64>(sig_h);
 
-        let sk = SecretKey::from_bytes(&seed);
+        let mut sk = SecretKey::default();
+        sk.init(&seed);
         let pk = PublicKey::from(&sk);
         assert_eq!(pk.as_bytes(), &exp_pk, "공개키 KAT 불일치");
 
