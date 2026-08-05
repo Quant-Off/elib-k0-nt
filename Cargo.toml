@@ -32,7 +32,7 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 lto = true # Link Time Optimization을 통한 바이너리 최소화
-opt-level = "z" # 크기 최적화
+opt-level = "z" # K0 커널로 인한 크기 최적화 필요
 
 [workspace.dependencies]
 zeroize = { path = "zeroize", version = "1.1.0" }
