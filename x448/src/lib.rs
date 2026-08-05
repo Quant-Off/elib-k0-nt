@@ -13,17 +13,21 @@
 //! ```rust,ignore
 //! use x448::{SecretKey, PublicKey};
 //!
-//! // Alice 키쌍 생성
-//! let alice_secret = SecretKey::from_bytes(alice_random_bytes);
+//! // Alice 키쌍 생성 (제자리 초기화로 move 잔류 방지)
+//! let mut alice_secret = SecretKey::default();
+//! alice_secret.init(&alice_random_bytes);
 //! let alice_public = alice_secret.public_key();
 //!
 //! // Bob 키쌍 생성
-//! let bob_secret = SecretKey::from_bytes(bob_random_bytes);
+//! let mut bob_secret = SecretKey::default();
+//! bob_secret.init(&bob_random_bytes);
 //! let bob_public = bob_secret.public_key();
 //!
-//! // 공유 비밀 계산
-//! let alice_shared = alice_secret.diffie_hellman(&bob_public).unwrap();
-//! let bob_shared = bob_secret.diffie_hellman(&alice_public).unwrap();
+//! // 공유 비밀 계산 (호출자가 둔 최종 위치에 직접 기록)
+//! let mut alice_shared = SharedSecret::default();
+//! let mut bob_shared = SharedSecret::default();
+//! alice_secret.diffie_hellman_into(&bob_public, &mut alice_shared).unwrap();
+//! bob_secret.diffie_hellman_into(&alice_public, &mut bob_shared).unwrap();
 //!
 //! assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 //! ```
@@ -49,9 +53,24 @@ pub enum X448Error {
 
 pub struct SecretKey(Secret<[u8; 56]>);
 
+impl Default for SecretKey {
+    fn default() -> Self {
+        SecretKey(Secret::new([0u8; 56]))
+    }
+}
+
 impl SecretKey {
-    pub fn from_bytes(bytes: [u8; 56]) -> Self {
-        SecretKey(Secret::new(bytes))
+    /// 비밀키 바이트를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `bytes`: 56바이트 비밀키 재료
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// move 로 인한 비밀키 스택 잔류가 없습니다. 입력 버퍼는 호출자가
+    /// 사용 후 직접 소거해야 합니다.
+    pub fn init(&mut self, bytes: &[u8; 56]) {
+        self.0.init_with(|k| *k = *bytes);
     }
 
     pub fn as_bytes(&self) -> &[u8; 56] {
@@ -63,14 +82,26 @@ impl SecretKey {
         PublicKey(public_bytes)
     }
 
-    pub fn diffie_hellman(&self, their_public: &PublicKey) -> Result<SharedSecret, X448Error> {
-        let mut shared = x448(self.0.expose(), &their_public.0);
-        let result = SharedSecret(Secret::new(shared));
-        shared.zeroize();
-        if result.is_zero() {
+    /// 공유 비밀을 호출자가 둔 `out` 에 제자리에서 계산합니다.
+    ///
+    /// # Arguments
+    /// - `their_public`: 상대 공개키
+    /// - `out`: 공유 비밀이 기록될 최종 위치
+    ///
+    /// # Errors
+    /// - `X448Error::LowOrderPoint`: 결과가 all-zero 인 저차수 점. `out` 은
+    ///   0 으로 남습니다.
+    pub fn diffie_hellman_into(
+        &self,
+        their_public: &PublicKey,
+        out: &mut SharedSecret,
+    ) -> Result<(), X448Error> {
+        out.0
+            .init_with(|s| x448_into(self.0.expose(), &their_public.0, s));
+        if out.is_zero() {
             Err(X448Error::LowOrderPoint)
         } else {
-            Ok(result)
+            Ok(())
         }
     }
 }
@@ -88,6 +119,12 @@ impl PublicKey {
 }
 
 pub struct SharedSecret(Secret<[u8; 56]>);
+
+impl Default for SharedSecret {
+    fn default() -> Self {
+        SharedSecret(Secret::new([0u8; 56]))
+    }
+}
 
 impl SharedSecret {
     pub fn as_bytes(&self) -> &[u8; 56] {
@@ -113,13 +150,19 @@ fn x448_base(k: &[u8; 56]) -> [u8; 56] {
 }
 
 fn x448(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
-    let mut scalar = Secret::new(*k);
-    clamp_scalar(scalar.expose_mut());
-    montgomery_ladder(scalar.expose(), u)
-    // scalar 는 스코프 종료 시 Secret::Drop 으로 자동 소거
+    let mut out = [0u8; 56];
+    x448_into(k, u, &mut out);
+    out
 }
 
-fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
+fn x448_into(k: &[u8; 56], u: &[u8; 56], out: &mut [u8; 56]) {
+    let mut scalar = *k;
+    clamp_scalar(&mut scalar);
+    montgomery_ladder_into(&scalar, u, out);
+    scalar.zeroize();
+}
+
+fn montgomery_ladder_into(k: &[u8; 56], u: &[u8; 56], out: &mut [u8; 56]) {
     let mut u_coord = FieldElement::from_bytes(u);
 
     let mut x_1 = u_coord;
@@ -178,7 +221,7 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
 
     let mut z_2_inv = z_2.invert();
     let mut result = x_2 * z_2_inv;
-    let bytes = result.to_bytes();
+    result.to_bytes_into(out);
 
     // 민감 중간값 명시적 소거
     u_coord.zeroize();
@@ -202,8 +245,6 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
     sum.zeroize();
     diff.zeroize();
     a24_e.zeroize();
-
-    bytes
 }
 
 fn mul_by_a24(e: FieldElement) -> FieldElement {
@@ -265,13 +306,14 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
     out
 }
 
-pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R) -> (SecretKey, PublicKey) {
-    let mut secret_bytes = [0u8; 56];
-    rng(&mut secret_bytes);
-    let secret = SecretKey::from_bytes(secret_bytes);
-    secret_bytes.zeroize();
-    let public = secret.public_key();
-    (secret, public)
+/// 호출자가 둔 `secret` 에 비밀키를 제자리에서 생성하고 공개키를 반환합니다.
+///
+/// # Arguments
+/// - `rng`: 56바이트를 채우는 엔트로피 공급 클로저
+/// - `secret`: 비밀키가 기록될 최종 위치
+pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R, secret: &mut SecretKey) -> PublicKey {
+    secret.0.init_with(|k| rng(k));
+    secret.public_key()
 }
 
 pub fn is_contributory(shared: &SharedSecret) -> Choice {
@@ -294,7 +336,8 @@ mod tests {
         let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(SecretKey::from_bytes([pattern; 56]));
+            storage.write(SecretKey::default());
+            storage.assume_init_mut().init(&[pattern; 56]);
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 56);
@@ -314,14 +357,19 @@ mod tests {
     /// SharedSecret 의 Drop 으로 내부 56바이트가 0 으로 소거되는지 검증.
     #[test]
     fn test_shared_secret_zeroize_on_drop() {
-        let alice_secret = SecretKey::from_bytes([0x11; 56]);
-        let bob_secret = SecretKey::from_bytes([0x22; 56]);
+        let mut alice_secret = SecretKey::default();
+        alice_secret.init(&[0x11; 56]);
+        let mut bob_secret = SecretKey::default();
+        bob_secret.init(&[0x22; 56]);
         let bob_pk = bob_secret.public_key();
 
         let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(alice_secret.diffie_hellman(&bob_pk).unwrap());
+            storage.write(SharedSecret::default());
+            alice_secret
+                .diffie_hellman_into(&bob_pk, storage.assume_init_mut())
+                .unwrap();
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 56);
@@ -360,7 +408,8 @@ mod tests {
         let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(SecretKey::from_bytes(input));
+            storage.write(SecretKey::default());
+            storage.assume_init_mut().init(&input);
             let internal_ptr = storage.assume_init_ref().as_bytes().as_ptr();
             assert_ne!(
                 internal_ptr,
@@ -459,14 +508,22 @@ mod tests {
             0x9c, 0x92, 0x1b, 0x09, 0xd1, 0xb0, 0x36, 0x6f, 0x10, 0xb6, 0x51, 0x73, 0x99, 0x2d,
         ];
 
-        let alice_sk = SecretKey::from_bytes(alice_secret);
-        let bob_sk = SecretKey::from_bytes(bob_secret);
+        let mut alice_sk = SecretKey::default();
+        alice_sk.init(&alice_secret);
+        let mut bob_sk = SecretKey::default();
+        bob_sk.init(&bob_secret);
 
         let alice_pk = alice_sk.public_key();
         let bob_pk = bob_sk.public_key();
 
-        let alice_shared = alice_sk.diffie_hellman(&bob_pk).unwrap();
-        let bob_shared = bob_sk.diffie_hellman(&alice_pk).unwrap();
+        let mut alice_shared = SharedSecret::default();
+        let mut bob_shared = SharedSecret::default();
+        alice_sk
+            .diffie_hellman_into(&bob_pk, &mut alice_shared)
+            .unwrap();
+        bob_sk
+            .diffie_hellman_into(&alice_pk, &mut bob_shared)
+            .unwrap();
 
         assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 
@@ -521,7 +578,8 @@ mod tests {
 
     #[test]
     fn test_low_order_point_rejection() {
-        let secret = SecretKey::from_bytes([1u8; 56]);
+        let mut secret = SecretKey::default();
+        secret.init(&[1u8; 56]);
 
         let mut u_one = [0u8; 56];
         u_one[0] = 1;
@@ -538,7 +596,8 @@ mod tests {
 
         for low_order in &low_order_points {
             let public = PublicKey::from_bytes(*low_order);
-            let result = secret.diffie_hellman(&public);
+            let mut shared = SharedSecret::default();
+            let result = secret.diffie_hellman_into(&public, &mut shared);
             assert!(
                 matches!(result, Err(X448Error::LowOrderPoint)),
                 "low-order point should be rejected"

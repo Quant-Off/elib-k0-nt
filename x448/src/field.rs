@@ -51,16 +51,15 @@ impl FieldElement {
         FieldElement(limbs)
     }
 
-    pub fn to_bytes(&self) -> [u8; 56] {
-        let t = self.reduce();
-        let mut bytes = [0u8; 56];
+    pub fn to_bytes_into(&self, out: &mut [u8; 56]) {
+        let mut t = self.reduce();
         for i in 0..LIMBS {
             let offset = i * 7;
             for j in 0..7 {
-                bytes[offset + j] = ((t.0[i] >> (j * 8)) & 0xff) as u8;
+                out[offset + j] = ((t.0[i] >> (j * 8)) & 0xff) as u8;
             }
         }
-        bytes
+        t.zeroize();
     }
 
     fn weak_reduce(&self) -> Self {
