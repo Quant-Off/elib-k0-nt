@@ -83,6 +83,7 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
     output
 }
 
+#[derive(Default)]
 pub struct ChaCha20 {
     key: Secret<[u8; 32]>,
     nonce: [u8; 12],
@@ -90,22 +91,25 @@ pub struct ChaCha20 {
 }
 
 impl ChaCha20 {
-    #[must_use]
-    pub fn new(key: &[u8; 32], nonce: &[u8; 12]) -> Self {
-        Self {
-            key: Secret::new(*key),
-            nonce: *nonce,
-            counter: 0,
-        }
+    /// 키와 논스를 제자리에서 설정하고 카운터를 0 으로 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    /// - `nonce`: 12바이트 논스
+    pub fn init(&mut self, key: &[u8; 32], nonce: &[u8; 12]) {
+        self.init_with_counter(key, nonce, 0);
     }
 
-    #[must_use]
-    pub fn new_with_counter(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> Self {
-        Self {
-            key: Secret::new(*key),
-            nonce: *nonce,
-            counter: u64::from(counter),
-        }
+    /// 키·논스·초기 카운터를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    /// - `nonce`: 12바이트 논스
+    /// - `counter`: 초기 블록 카운터
+    pub fn init_with_counter(&mut self, key: &[u8; 32], nonce: &[u8; 12], counter: u32) {
+        self.key.init_with(|k| *k = *key);
+        self.nonce = *nonce;
+        self.counter = u64::from(counter);
     }
 
     #[must_use]
@@ -177,7 +181,8 @@ mod tests {
         let mut storage: MaybeUninit<ChaCha20> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(ChaCha20::new_with_counter(&key, &nonce, 42));
+            storage.write(ChaCha20::default());
+            (*storage.as_mut_ptr()).init_with_counter(&key, &nonce, 42);
             let key_ptr = storage.assume_init_ref().key.expose().as_ptr();
             let nonce_ptr = storage.assume_init_ref().nonce.as_ptr();
             let ctr_ptr = &raw const (*storage.as_ptr()).counter;
@@ -205,7 +210,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "카운터 소진")]
     fn test_counter_exhaustion_keystream_block() {
-        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
         let _ = chacha.keystream_block();
         let _ = chacha.keystream_block();
     }
@@ -214,7 +220,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "카운터 소진")]
     fn test_counter_exhaustion_apply_keystream() {
-        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
         let mut data = [0u8; 128];
         chacha.apply_keystream(&mut data);
     }
@@ -223,7 +230,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "블록 카운터 0")]
     fn test_poly1305_keygen_requires_counter_zero() {
-        let mut chacha = ChaCha20::new_with_counter(&[0u8; 32], &[0u8; 12], 1);
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], 1);
         let _ = chacha.generate_poly1305_key();
     }
 
@@ -277,7 +285,8 @@ mod tests {
             0x87, 0x4d,
         ];
 
-        let mut chacha = ChaCha20::new_with_counter(&key, &nonce, 1);
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&key, &nonce, 1);
         let mut output = [0u8; 114];
         output.copy_from_slice(plaintext);
         chacha.apply_keystream(&mut output);

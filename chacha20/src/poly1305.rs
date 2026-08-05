@@ -2,6 +2,7 @@ use constant_time::Choice;
 use constant_time::traits::{CtEqOps, CtSelOps};
 use zeroize::Zeroize;
 
+#[derive(Default)]
 pub struct Poly1305 {
     r: [u32; 5],
     h: [u32; 5],
@@ -11,8 +12,11 @@ pub struct Poly1305 {
 }
 
 impl Poly1305 {
-    #[must_use]
-    pub fn new(key: &[u8; 32]) -> Self {
+    /// Poly1305 키를 제자리에서 설정하고 상태를 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 일회용 Poly1305 키
+    pub fn init(&mut self, key: &[u8; 32]) {
         let mut clamped = [0u8; 16];
         clamped.copy_from_slice(&key[..16]);
 
@@ -42,13 +46,11 @@ impl Poly1305 {
         let mut pad2 = u32::from_le_bytes([key[24], key[25], key[26], key[27]]);
         let mut pad3 = u32::from_le_bytes([key[28], key[29], key[30], key[31]]);
 
-        let state = Self {
-            r: [r0, r1, r2, r3, r4],
-            h: [0, 0, 0, 0, 0],
-            pad: [pad0, pad1, pad2, pad3],
-            buffer: [0u8; 16],
-            buffer_len: 0,
-        };
+        self.r = [r0, r1, r2, r3, r4];
+        self.h = [0, 0, 0, 0, 0];
+        self.pad = [pad0, pad1, pad2, pad3];
+        self.buffer = [0u8; 16];
+        self.buffer_len = 0;
 
         t0.zeroize();
         t1.zeroize();
@@ -63,8 +65,6 @@ impl Poly1305 {
         pad1.zeroize();
         pad2.zeroize();
         pad3.zeroize();
-
-        state
     }
 
     fn block(&mut self, m: &[u8], hibit: u32) {
@@ -212,8 +212,12 @@ impl Poly1305 {
         }
     }
 
+    /// 태그를 출력하고 모든 내부 상태를 제자리에서 소거합니다.
+    ///
+    /// # Security Note
+    /// `self` 를 이동 소비하지 않으므로 원본 슬롯에 사본이 남지 않습니다.
     #[must_use]
-    pub fn finalize(mut self) -> [u8; 16] {
+    pub fn finalize(&mut self) -> [u8; 16] {
         if self.buffer_len > 0 {
             self.buffer[self.buffer_len] = 0x01;
             for i in (self.buffer_len + 1)..16 {
@@ -282,6 +286,7 @@ impl Poly1305 {
         self.r.zeroize();
         self.pad.zeroize();
         self.buffer.zeroize();
+        self.buffer_len = 0;
 
         h0.zeroize();
         h1.zeroize();
@@ -335,7 +340,8 @@ mod tests {
         let mut storage: MaybeUninit<Poly1305> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(Poly1305::new(&key));
+            storage.write(Poly1305::default());
+            (*storage.as_mut_ptr()).init(&key);
             // update 로 h 를 0 이 아닌 값으로 진행시킴
             (*storage.as_mut_ptr()).update(&[0x33u8; 16]);
 
@@ -379,7 +385,8 @@ mod tests {
             0x27, 0xa9,
         ];
 
-        let mut poly = Poly1305::new(&key);
+        let mut poly = Poly1305::default();
+        poly.init(&key);
         poly.update(msg);
         let tag = poly.finalize();
 
@@ -394,7 +401,8 @@ mod tests {
             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
             0xFF, 0x10,
         ]);
-        let poly = Poly1305::new(&key);
+        let mut poly = Poly1305::default();
+        poly.init(&key);
         let tag = poly.finalize();
         assert_eq!(&tag[..], &key[16..], "빈 메시지 태그가 s 와 다름");
     }
