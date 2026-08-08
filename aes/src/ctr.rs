@@ -1,7 +1,10 @@
-use crate::AES256;
+use crate::{AES256, Error};
+use zeroize::Zeroize;
 
 pub const CTR_NONCE_SIZE: usize = 12;
 pub const CTR_IV_SIZE: usize = 16;
+
+const CTR_MAX_INPUT_LEN: u64 = 1 << 36;
 
 fn inc32(block: &mut [u8; 16]) {
     let mut carry = 1u16;
@@ -12,60 +15,100 @@ fn inc32(block: &mut [u8; 16]) {
     }
 }
 
+#[derive(Default)]
 pub struct AES256CTR {
     cipher: AES256,
 }
 
 impl AES256CTR {
-    #[must_use]
-    pub fn new(key: &[u8; 32]) -> Self {
-        Self {
-            cipher: AES256::new(key),
-        }
+    /// 256비트 키를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    pub fn init(&mut self, key: &[u8; 32]) {
+        self.cipher.init(key);
     }
 
     fn apply_internal(&self, counter: &mut [u8; 16], input: &[u8], output: &mut [u8]) {
         let mut offset = 0;
 
         while offset + 16 <= input.len() {
-            let keystream = self.cipher.encrypt(counter);
+            let mut keystream = self.cipher.encrypt(counter);
             for i in 0..16 {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
             inc32(counter);
+            keystream.zeroize();
             offset += 16;
         }
 
         if offset < input.len() {
-            let keystream = self.cipher.encrypt(counter);
+            let mut keystream = self.cipher.encrypt(counter);
             for i in 0..(input.len() - offset) {
                 output[offset + i] = input[offset + i] ^ keystream[i];
             }
+            keystream.zeroize();
         }
     }
 
-    pub fn apply_iv(&self, iv: &[u8; CTR_IV_SIZE], input: &[u8], output: &mut [u8]) {
-        debug_assert!(output.len() >= input.len());
+    pub fn apply_iv(
+        &self,
+        iv: &[u8; CTR_IV_SIZE],
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(), Error> {
+        if output.len() < input.len() {
+            return Err(Error::BufferTooSmall);
+        }
+        if input.len() as u64 > CTR_MAX_INPUT_LEN {
+            return Err(Error::InputTooLong);
+        }
         let mut counter = *iv;
         self.apply_internal(&mut counter, input, output);
+        counter.zeroize();
+
+        Ok(())
     }
 
-    pub fn apply(&self, nonce: &[u8; CTR_NONCE_SIZE], input: &[u8], output: &mut [u8]) {
-        debug_assert!(output.len() >= input.len());
+    pub fn apply(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(), Error> {
+        if output.len() < input.len() {
+            return Err(Error::BufferTooSmall);
+        }
+        if input.len() as u64 > CTR_MAX_INPUT_LEN {
+            return Err(Error::InputTooLong);
+        }
         let mut counter = [0u8; 16];
         counter[..12].copy_from_slice(nonce);
         counter[12..16].copy_from_slice(&1u32.to_be_bytes());
         self.apply_internal(&mut counter, input, output);
+        counter.zeroize();
+
+        Ok(())
     }
 
     #[inline]
-    pub fn encrypt(&self, nonce: &[u8; CTR_NONCE_SIZE], plaintext: &[u8], ciphertext: &mut [u8]) {
-        self.apply(nonce, plaintext, ciphertext);
+    pub fn encrypt(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        plaintext: &[u8],
+        ciphertext: &mut [u8],
+    ) -> Result<(), Error> {
+        self.apply(nonce, plaintext, ciphertext)
     }
 
     #[inline]
-    pub fn decrypt(&self, nonce: &[u8; CTR_NONCE_SIZE], ciphertext: &[u8], plaintext: &mut [u8]) {
-        self.apply(nonce, ciphertext, plaintext);
+    pub fn decrypt(
+        &self,
+        nonce: &[u8; CTR_NONCE_SIZE],
+        ciphertext: &[u8],
+        plaintext: &mut [u8],
+    ) -> Result<(), Error> {
+        self.apply(nonce, ciphertext, plaintext)
     }
 }
 
@@ -99,13 +142,14 @@ mod tests {
             0x13, 0xc2, 0xdd, 0x08, 0x45, 0x79, 0x41, 0xa6,
         ];
 
-        let ctr = AES256CTR::new(&key);
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
         let mut ciphertext = [0u8; 64];
-        ctr.apply_iv(&iv, &plaintext, &mut ciphertext);
+        ctr.apply_iv(&iv, &plaintext, &mut ciphertext).unwrap();
         assert_eq!(ciphertext, expected_ciphertext);
 
         let mut decrypted = [0u8; 64];
-        ctr.apply_iv(&iv, &ciphertext, &mut decrypted);
+        ctr.apply_iv(&iv, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -115,12 +159,26 @@ mod tests {
         let nonce: [u8; 12] = [0x01u8; 12];
         let plaintext: [u8; 20] = [0xAAu8; 20];
 
-        let ctr = AES256CTR::new(&key);
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
         let mut ciphertext = [0u8; 20];
-        ctr.encrypt(&nonce, &plaintext, &mut ciphertext);
+        ctr.encrypt(&nonce, &plaintext, &mut ciphertext).unwrap();
 
         let mut decrypted = [0u8; 20];
-        ctr.decrypt(&nonce, &ciphertext, &mut decrypted);
+        ctr.decrypt(&nonce, &ciphertext, &mut decrypted).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn ctr_buffer_too_small() {
+        let key = [0x11u8; 32];
+        let nonce = [0x22u8; 12];
+        let input = [0x33u8; 32];
+
+        let mut ctr = AES256CTR::default();
+        ctr.init(&key);
+        let mut output = [0u8; 16];
+        let result = ctr.apply(&nonce, &input, &mut output);
+        assert_eq!(result, Err(Error::BufferTooSmall));
     }
 }

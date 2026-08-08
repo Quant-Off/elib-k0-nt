@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use constant_time::{CtEqOps, CtLess};
+    use constant_time::traits::{CtEqOps, CtLess};
     use std::hint::black_box;
 
     const CHAN_MAX: usize = 4096;
@@ -16,8 +16,8 @@ mod tests {
     // handle_write / handle_relay 의 step (1) CT 범위 검사 미러
     #[inline(never)]
     fn check_byte_len(byte_len: usize) -> bool {
-        let lt_max: u8 = CtLess::lt(&byte_len, &(CHAN_MAX + 1)).unwrap_u8();
-        let nonzero: u8 = CtEqOps::ne(&byte_len, &0usize).unwrap_u8();
+        let lt_max: u8 = CtLess::ct_lt(&byte_len, &(CHAN_MAX + 1)).unwrap_u8();
+        let nonzero: u8 = CtEqOps::ct_ne(&byte_len, &0usize).unwrap_u8();
         (lt_max & nonzero) == 1
     }
 

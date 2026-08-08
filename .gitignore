@@ -1,7 +1,11 @@
 target/
 .idea/
 dist/
+.DS_Store
 *.iso
 Cargo.lock
 CLAUDE.md
 .planning/
+cavp/
+.claude/
+INTERNAL_*

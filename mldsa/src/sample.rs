@@ -70,6 +70,20 @@ pub fn expand_s<const K: usize, const L: usize, const ETA: i32>(
     Ok((s1, s2))
 }
 
+fn coeff_from_half_byte<const ETA: i32>(b: i32) -> Option<i32> {
+    let mut val = if ETA == 2 {
+        if b < 15 { 2 - (b % 5) } else { return None }
+    } else if b < 9 {
+        4 - b
+    } else {
+        return None;
+    };
+    if val < 0 {
+        val += Q;
+    }
+    Some(val)
+}
+
 fn rej_bounded_poly<const ETA: i32>(rho_prime: &[u8; 64], nonce: u16) -> Result<Poly, Error> {
     let mut seed = [0u8; 66];
     seed[..64].copy_from_slice(rho_prime);
@@ -92,20 +106,14 @@ fn rej_bounded_poly<const ETA: i32>(rho_prime: &[u8; 64], nonce: u16) -> Result<
         let z0 = (z & 0x0F) as i32;
         let z1 = (z >> 4) as i32;
 
-        if z0 <= 2 * ETA {
-            let mut val = ETA - z0;
-            if val < 0 {
-                val += Q;
-            }
+        if let Some(val) = coeff_from_half_byte::<ETA>(z0) {
             poly.coeffs[count] = Fq::new(val);
             count += 1;
         }
 
-        if count < N && z1 <= 2 * ETA {
-            let mut val = ETA - z1;
-            if val < 0 {
-                val += Q;
-            }
+        if count < N
+            && let Some(val) = coeff_from_half_byte::<ETA>(z1)
+        {
             poly.coeffs[count] = Fq::new(val);
             count += 1;
         }

@@ -71,6 +71,8 @@ impl Scalar {
         // byte 56 must be 0 for canonical scalars (L[56] = 0)
         result[56] = 0;
 
+        // 비밀 파생 중간 limb 소거 (result 는 호출자가 소거)
+        s.zeroize();
         Scalar(result)
     }
 
@@ -157,6 +159,9 @@ fn sc_reduce_wide(s: &mut [u64; 18]) {
             bytes[i] = (sum & 0xff) as u8;
             carry = sum >> 8;
         }
+
+        // 비밀 파생 부분곱 소거
+        product.zeroize();
     }
 
     // bytes >= L인 동안 L 빼기
@@ -222,6 +227,9 @@ fn sc_reduce_wide(s: &mut [u64; 18]) {
     for i in 8..18 {
         s[i] = 0;
     }
+
+    // 비밀 파생 바이트 버퍼 소거
+    bytes.zeroize();
 }
 
 pub fn sc_muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
@@ -273,6 +281,11 @@ pub fn sc_muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
     // byte 56 must be 0 for canonical scalars
     result[56] = 0;
 
+    // 비밀 파생 중간 limb 소거 (result 는 호출자가 소거)
+    s.zeroize();
+    a_limbs.zeroize();
+    b_limbs.zeroize();
+    c_limbs.zeroize();
     Scalar(result)
 }
 
@@ -289,9 +302,10 @@ impl Sub for Scalar {
 
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn sub(self, rhs: Self) -> Self {
-        let mut neg_bytes = [0xffu8; 57];
-        neg_bytes[56] = 0;
-        let neg_rhs = sc_muladd(&Scalar(neg_bytes), &rhs, &Scalar::zero());
+        // -1 mod L = L - 1 로 rhs 부정 후 더함 (L_BYTES[0]=0xf3 이라 borrow 없음)
+        let mut neg_one = L_BYTES;
+        neg_one[0] = 0xf2;
+        let neg_rhs = sc_muladd(&Scalar(neg_one), &rhs, &Scalar::zero());
         sc_muladd(&Scalar::one(), &self, &neg_rhs)
     }
 }

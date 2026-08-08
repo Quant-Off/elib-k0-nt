@@ -6,10 +6,7 @@
 #![allow(
     clippy::unusual_byte_groupings,
     clippy::wrong_self_convention,
-    clippy::question_mark,
-    dead_code,
-    unused_variables,
-    unused_mut
+    clippy::question_mark
 )]
 
 use crate::field::FieldElement;
@@ -27,10 +24,6 @@ fn d_constant() -> FieldElement {
         0x03, 0x52,
     ];
     FieldElement::from_bytes(&d_bytes)
-}
-
-fn d2_constant() -> FieldElement {
-    d_constant().double()
 }
 
 /// 기저점 B의 y 좌표
@@ -98,6 +91,12 @@ impl EdwardsPoint {
         y_bytes[31] &= 0x7F;
         let y = FieldElement::from_bytes(&y_bytes);
 
+        // 비정규 인코딩 거부 (RFC 8032 5.1.3: y < p 이어야 함)
+        // 정규 직렬화 결과가 입력과 다르면 y >= p 인 비정규 표현
+        if y.to_bytes() != y_bytes {
+            return None;
+        }
+
         // x^2 = (y^2 - 1) / (d*y^2 + 1) 계산
         let y2 = y.square();
         let u = y2 - FieldElement::one(); // y^2 - 1
@@ -161,28 +160,16 @@ impl EdwardsPoint {
     ///
     /// RFC 8032 및 "Twisted Edwards Curves Revisited" 논문 참조
     fn add_internal(&self, other: &Self) -> Self {
-        // 통합 덧셈 공식 (complete addition formula)
-        // C = d * T1 * T2 (NOT 2*d)
+        // add-2008-hwcd 통합 덧셈 (a = -1, d 비제곱이므로 Ed25519 에서 완전식)
         let a = self.x * other.x;
         let b = self.y * other.y;
-        let c = self.t * d_constant() * other.t;
+        let c = self.t * d_constant() * other.t; // C = d*T1*T2
         let d = self.z * other.z;
 
         let e = (self.x + self.y) * (other.x + other.y) - a - b;
         let f = d - c;
         let g = d + c;
-        let h = b + a; // -x^2 + y^2 커브이므로 b - (-a) = b + a
-
-        // 실제로는 -x^2 + y^2 = 1 + d*x^2*y^2
-        // a 커브이므로 a = -1
-        let h = b - a * FieldElement::from_bytes(&[
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xff, 0x7f,
-        ]); // a = -1이므로 h = b - a = b - (-1)*a = b + a
-
-        // 단순화: Ed25519는 a = -1
-        let h = b + a;
+        let h = b + a; // H = B - a*A, a = -1 이므로 B + A
 
         EdwardsPoint {
             x: e * f,
@@ -213,29 +200,35 @@ impl EdwardsPoint {
         }
     }
 
-    /// 스칼라 곱셈: s * P
-    pub fn scalar_mul(&self, scalar: &Scalar) -> Self {
-        // 고정-윈도우 방식 (4-bit window)
-        // 또는 간단한 double-and-add
+    /// 조건부 점 선택 (상수시간): choice가 1이면 b, 0이면 a를 반환합니다.
+    #[inline]
+    fn conditional_select(a: &Self, b: &Self, choice: u8) -> Self {
+        EdwardsPoint {
+            x: FieldElement::conditional_select(&a.x, &b.x, choice),
+            y: FieldElement::conditional_select(&a.y, &b.y, choice),
+            z: FieldElement::conditional_select(&a.z, &b.z, choice),
+            t: FieldElement::conditional_select(&a.t, &b.t, choice),
+        }
+    }
 
-        // 스칼라 바이트는 비밀일 수 있으므로 Secret 래핑
+    /// 스칼라 곱셈: s * P
+    ///
+    /// # Security Note
+    /// 비밀 스칼라의 비트에 분기하지 않는 상수시간 double-and-add 입니다.
+    /// 매 비트마다 덧셈을 항상 수행한 뒤 조건부 선택으로 누적값을 갱신하여
+    /// 타이밍 사이드 채널로 스칼라가 새지 않도록 합니다.
+    pub fn scalar_mul(&self, scalar: &Scalar) -> Self {
         let mut s = scalar.to_bytes();
         let mut result = EdwardsPoint::identity();
 
-        // MSB부터 double-and-add
         for i in (0..256).rev() {
             result = result.double_internal();
-
-            let byte_idx = i / 8;
-            let bit_idx = i % 8;
-            let bit = (s[byte_idx] >> bit_idx) & 1;
-
-            if bit == 1 {
-                result = result.add_internal(self);
-            }
+            let bit = (s[i / 8] >> (i % 8)) & 1;
+            let mut sum = result.add_internal(self);
+            result = EdwardsPoint::conditional_select(&result, &sum, bit);
+            sum.zeroize();
         }
 
-        // 스칼라 사본 명시적 소거
         s.zeroize();
         result
     }
@@ -243,16 +236,6 @@ impl EdwardsPoint {
     /// 기저점의 스칼라 곱셈: s * B
     pub fn basepoint_mul(scalar: &Scalar) -> Self {
         Self::basepoint().scalar_mul(scalar)
-    }
-
-    /// 이중 스칼라 곱셈: a*A + b*B
-    ///
-    /// 검증에서 사용됩니다. Straus/Shamir 기법으로 최적화 가능.
-    pub fn double_scalar_mul_basepoint(a: &Scalar, point_a: &Self, b: &Scalar) -> Self {
-        // 간단한 구현: 별도 계산 후 덧셈
-        let a_point = point_a.scalar_mul(a);
-        let b_point = Self::basepoint_mul(b);
-        a_point.add_internal(&b_point)
     }
 }
 

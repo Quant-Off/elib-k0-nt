@@ -2,9 +2,6 @@
 //!
 //! x86_64, aarch64 외의 아키텍처에서 사용되며,
 //! `core::sync::atomic` 기반의 배리어를 제공합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 /// CPU 메모리 배리어를 수행합니다.
 ///
@@ -35,13 +32,12 @@ pub fn atomic_compiler_fence() {
 
 /// 값을 최적화에서 숨깁니다.
 ///
-/// 휘발성 읽기를 수행하여 컴파일러가 해당 값에 대한
-/// 연산을 최적화하지 못하도록 합니다.
+/// `core::hint::black_box` 로 위임하여 컴파일러가 해당 값에 대한
+/// 연산을 최적화하지 못하도록 하며, 값은 소유권 이동으로 그대로 반환됩니다.
 ///
 /// # Arguments
 /// - `value`: 최적화에서 숨길 값
 #[inline(never)]
 pub fn black_box<T>(value: T) -> T {
-    let ptr = &value as *const T;
-    unsafe { core::ptr::read_volatile(ptr) }
+    core::hint::black_box(value)
 }

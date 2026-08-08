@@ -1,4 +1,5 @@
 use crate::sbox::sub_word;
+use zeroize::Zeroize;
 
 const NK: usize = 8;
 const NB: usize = 4;
@@ -13,9 +14,7 @@ fn rot_word(w: u32) -> u32 {
     w.rotate_left(8)
 }
 
-pub fn expand_key(key: &[u8; 32]) -> [u32; NB * (NR + 1)] {
-    let mut w = [0u32; NB * (NR + 1)];
-
+pub fn expand_key(key: &[u8; 32], w: &mut [u32; NB * (NR + 1)]) {
     for i in 0..NK {
         w[i] = u32::from_be_bytes([key[4 * i], key[4 * i + 1], key[4 * i + 2], key[4 * i + 3]]);
     }
@@ -28,7 +27,6 @@ pub fn expand_key(key: &[u8; 32]) -> [u32; NB * (NR + 1)] {
             temp = sub_word(temp);
         }
         w[i] = w[i - NK] ^ temp;
+        temp.zeroize();
     }
-
-    w
 }

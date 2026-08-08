@@ -13,29 +13,31 @@
 //! ```rust,ignore
 //! use x448::{SecretKey, PublicKey};
 //!
-//! // Alice 키쌍 생성
-//! let alice_secret = SecretKey::from_bytes(alice_random_bytes);
+//! // Alice 키쌍 생성 (제자리 초기화로 move 잔류 방지)
+//! let mut alice_secret = SecretKey::default();
+//! alice_secret.init(&alice_random_bytes);
 //! let alice_public = alice_secret.public_key();
 //!
 //! // Bob 키쌍 생성
-//! let bob_secret = SecretKey::from_bytes(bob_random_bytes);
+//! let mut bob_secret = SecretKey::default();
+//! bob_secret.init(&bob_random_bytes);
 //! let bob_public = bob_secret.public_key();
 //!
-//! // 공유 비밀 계산
-//! let alice_shared = alice_secret.diffie_hellman(&bob_public);
-//! let bob_shared = bob_secret.diffie_hellman(&alice_public);
+//! // 공유 비밀 계산 (호출자가 둔 최종 위치에 직접 기록)
+//! let mut alice_shared = SharedSecret::default();
+//! let mut bob_shared = SharedSecret::default();
+//! alice_secret.diffie_hellman_into(&bob_public, &mut alice_shared).unwrap();
+//! bob_secret.diffie_hellman_into(&alice_public, &mut bob_shared).unwrap();
 //!
 //! assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 //! ```
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 
 mod field;
 
-use constant_time::{Choice, CtEqOps};
+use constant_time::Choice;
+use constant_time::traits::CtEqOps;
 use field::FieldElement;
 use zeroize::{Secret, Zeroize};
 
@@ -44,11 +46,31 @@ const BASEPOINT_U: [u8; 56] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum X448Error {
+    LowOrderPoint,
+}
+
 pub struct SecretKey(Secret<[u8; 56]>);
 
+impl Default for SecretKey {
+    fn default() -> Self {
+        SecretKey(Secret::new([0u8; 56]))
+    }
+}
+
 impl SecretKey {
-    pub fn from_bytes(bytes: [u8; 56]) -> Self {
-        SecretKey(Secret::new(bytes))
+    /// 비밀키 바이트를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `bytes`: 56바이트 비밀키 재료
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// move 로 인한 비밀키 스택 잔류가 없습니다. 입력 버퍼는 호출자가
+    /// 사용 후 직접 소거해야 합니다.
+    pub fn init(&mut self, bytes: &[u8; 56]) {
+        self.0.init_with(|k| *k = *bytes);
     }
 
     pub fn as_bytes(&self) -> &[u8; 56] {
@@ -60,11 +82,27 @@ impl SecretKey {
         PublicKey(public_bytes)
     }
 
-    pub fn diffie_hellman(&self, their_public: &PublicKey) -> SharedSecret {
-        let mut shared = x448(self.0.expose(), &their_public.0);
-        let result = SharedSecret(Secret::new(shared));
-        shared.zeroize();
-        result
+    /// 공유 비밀을 호출자가 둔 `out` 에 제자리에서 계산합니다.
+    ///
+    /// # Arguments
+    /// - `their_public`: 상대 공개키
+    /// - `out`: 공유 비밀이 기록될 최종 위치
+    ///
+    /// # Errors
+    /// - `X448Error::LowOrderPoint`: 결과가 all-zero 인 저차수 점. `out` 은
+    ///   0 으로 남습니다.
+    pub fn diffie_hellman_into(
+        &self,
+        their_public: &PublicKey,
+        out: &mut SharedSecret,
+    ) -> Result<(), X448Error> {
+        out.0
+            .init_with(|s| x448_into(self.0.expose(), &their_public.0, s));
+        if out.is_zero() {
+            Err(X448Error::LowOrderPoint)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -81,6 +119,12 @@ impl PublicKey {
 }
 
 pub struct SharedSecret(Secret<[u8; 56]>);
+
+impl Default for SharedSecret {
+    fn default() -> Self {
+        SharedSecret(Secret::new([0u8; 56]))
+    }
+}
 
 impl SharedSecret {
     pub fn as_bytes(&self) -> &[u8; 56] {
@@ -106,13 +150,19 @@ fn x448_base(k: &[u8; 56]) -> [u8; 56] {
 }
 
 fn x448(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
-    let mut scalar = Secret::new(*k);
-    clamp_scalar(scalar.expose_mut());
-    montgomery_ladder(scalar.expose(), u)
-    // scalar 는 스코프 종료 시 Secret::Drop 으로 자동 소거
+    let mut out = [0u8; 56];
+    x448_into(k, u, &mut out);
+    out
 }
 
-fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
+fn x448_into(k: &[u8; 56], u: &[u8; 56], out: &mut [u8; 56]) {
+    let mut scalar = *k;
+    clamp_scalar(&mut scalar);
+    montgomery_ladder_into(&scalar, u, out);
+    scalar.zeroize();
+}
+
+fn montgomery_ladder_into(k: &[u8; 56], u: &[u8; 56], out: &mut [u8; 56]) {
     let mut u_coord = FieldElement::from_bytes(u);
 
     let mut x_1 = u_coord;
@@ -122,6 +172,19 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
     let mut z_3 = FieldElement::one();
 
     let mut swap: u8 = 0;
+
+    let mut a = FieldElement::zero();
+    let mut aa = FieldElement::zero();
+    let mut b = FieldElement::zero();
+    let mut bb = FieldElement::zero();
+    let mut e = FieldElement::zero();
+    let mut c = FieldElement::zero();
+    let mut d = FieldElement::zero();
+    let mut da = FieldElement::zero();
+    let mut cb = FieldElement::zero();
+    let mut sum = FieldElement::zero();
+    let mut diff = FieldElement::zero();
+    let mut a24_e = FieldElement::zero();
 
     for pos in (0..448).rev() {
         let byte_idx = pos / 8;
@@ -134,21 +197,21 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
         FieldElement::conditional_swap(&mut z_2, &mut z_3, choice);
         swap = k_t;
 
-        let a = x_2 + z_2;
-        let aa = a.square();
-        let b = x_2 - z_2;
-        let bb = b.square();
-        let e = aa - bb;
-        let c = x_3 + z_3;
-        let d = x_3 - z_3;
-        let da = d * a;
-        let cb = c * b;
-        let sum = da + cb;
-        let diff = da - cb;
+        a = x_2 + z_2;
+        aa = a.square();
+        b = x_2 - z_2;
+        bb = b.square();
+        e = aa - bb;
+        c = x_3 + z_3;
+        d = x_3 - z_3;
+        da = d * a;
+        cb = c * b;
+        sum = da + cb;
+        diff = da - cb;
         x_3 = sum.square();
         z_3 = x_1 * diff.square();
         x_2 = aa * bb;
-        let a24_e = mul_by_a24(e);
+        a24_e = mul_by_a24(e);
         z_2 = e * (aa + a24_e);
     }
 
@@ -158,7 +221,7 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
 
     let mut z_2_inv = z_2.invert();
     let mut result = x_2 * z_2_inv;
-    let bytes = result.to_bytes();
+    result.to_bytes_into(out);
 
     // 민감 중간값 명시적 소거
     u_coord.zeroize();
@@ -170,8 +233,18 @@ fn montgomery_ladder(k: &[u8; 56], u: &[u8; 56]) -> [u8; 56] {
     z_2_inv.zeroize();
     result.zeroize();
     swap.zeroize();
-
-    bytes
+    a.zeroize();
+    aa.zeroize();
+    b.zeroize();
+    bb.zeroize();
+    e.zeroize();
+    c.zeroize();
+    d.zeroize();
+    da.zeroize();
+    cb.zeroize();
+    sum.zeroize();
+    diff.zeroize();
+    a24_e.zeroize();
 }
 
 fn mul_by_a24(e: FieldElement) -> FieldElement {
@@ -219,7 +292,7 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
     c[0] += carry;
     c[4] += carry;
 
-    FieldElement([
+    let out = FieldElement([
         c[0] as u64,
         c[1] as u64,
         c[2] as u64,
@@ -228,16 +301,19 @@ fn mul_by_a24(e: FieldElement) -> FieldElement {
         c[5] as u64,
         c[6] as u64,
         c[7] as u64,
-    ])
+    ]);
+    c.zeroize();
+    out
 }
 
-pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R) -> (SecretKey, PublicKey) {
-    let mut secret_bytes = [0u8; 56];
-    rng(&mut secret_bytes);
-    let secret = SecretKey::from_bytes(secret_bytes);
-    secret_bytes.zeroize();
-    let public = secret.public_key();
-    (secret, public)
+/// 호출자가 둔 `secret` 에 비밀키를 제자리에서 생성하고 공개키를 반환합니다.
+///
+/// # Arguments
+/// - `rng`: 56바이트를 채우는 엔트로피 공급 클로저
+/// - `secret`: 비밀키가 기록될 최종 위치
+pub fn generate_keypair<R: FnMut(&mut [u8])>(mut rng: R, secret: &mut SecretKey) -> PublicKey {
+    secret.0.init_with(|k| rng(k));
+    secret.public_key()
 }
 
 pub fn is_contributory(shared: &SharedSecret) -> Choice {
@@ -245,7 +321,7 @@ pub fn is_contributory(shared: &SharedSecret) -> Choice {
     for b in shared.0.expose().iter() {
         acc |= *b;
     }
-    CtEqOps::ne(&acc, &0)
+    CtEqOps::ct_ne(&acc, &0)
 }
 
 #[cfg(test)]
@@ -260,7 +336,8 @@ mod tests {
         let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(SecretKey::from_bytes([pattern; 56]));
+            storage.write(SecretKey::default());
+            storage.assume_init_mut().init(&[pattern; 56]);
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 56);
@@ -280,14 +357,19 @@ mod tests {
     /// SharedSecret 의 Drop 으로 내부 56바이트가 0 으로 소거되는지 검증.
     #[test]
     fn test_shared_secret_zeroize_on_drop() {
-        let alice_secret = SecretKey::from_bytes([0x11; 56]);
-        let bob_secret = SecretKey::from_bytes([0x22; 56]);
+        let mut alice_secret = SecretKey::default();
+        alice_secret.init(&[0x11; 56]);
+        let mut bob_secret = SecretKey::default();
+        bob_secret.init(&[0x22; 56]);
         let bob_pk = bob_secret.public_key();
 
         let mut storage: MaybeUninit<SharedSecret> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(alice_secret.diffie_hellman(&bob_pk));
+            storage.write(SharedSecret::default());
+            alice_secret
+                .diffie_hellman_into(&bob_pk, storage.assume_init_mut())
+                .unwrap();
             let ptr = storage.assume_init_ref().as_bytes().as_ptr();
 
             let pre = core::slice::from_raw_parts(ptr, 56);
@@ -326,7 +408,8 @@ mod tests {
         let mut storage: MaybeUninit<SecretKey> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(SecretKey::from_bytes(input));
+            storage.write(SecretKey::default());
+            storage.assume_init_mut().init(&input);
             let internal_ptr = storage.assume_init_ref().as_bytes().as_ptr();
             assert_ne!(
                 internal_ptr,
@@ -425,14 +508,22 @@ mod tests {
             0x9c, 0x92, 0x1b, 0x09, 0xd1, 0xb0, 0x36, 0x6f, 0x10, 0xb6, 0x51, 0x73, 0x99, 0x2d,
         ];
 
-        let alice_sk = SecretKey::from_bytes(alice_secret);
-        let bob_sk = SecretKey::from_bytes(bob_secret);
+        let mut alice_sk = SecretKey::default();
+        alice_sk.init(&alice_secret);
+        let mut bob_sk = SecretKey::default();
+        bob_sk.init(&bob_secret);
 
         let alice_pk = alice_sk.public_key();
         let bob_pk = bob_sk.public_key();
 
-        let alice_shared = alice_sk.diffie_hellman(&bob_pk);
-        let bob_shared = bob_sk.diffie_hellman(&alice_pk);
+        let mut alice_shared = SharedSecret::default();
+        let mut bob_shared = SharedSecret::default();
+        alice_sk
+            .diffie_hellman_into(&bob_pk, &mut alice_shared)
+            .unwrap();
+        bob_sk
+            .diffie_hellman_into(&alice_pk, &mut bob_shared)
+            .unwrap();
 
         assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
 
@@ -487,22 +578,51 @@ mod tests {
 
     #[test]
     fn test_low_order_point_rejection() {
-        let secret = SecretKey::from_bytes([1u8; 56]);
-        let low_order_points: [[u8; 56]; 2] = [
-            [0u8; 56],
-            [
-                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-        ];
+        let mut secret = SecretKey::default();
+        secret.init(&[1u8; 56]);
+
+        let mut u_one = [0u8; 56];
+        u_one[0] = 1;
+
+        // 비정규 인코딩 p 는 u = 0, p+1 은 u = 1 에 해당
+        let mut p_bytes = [0xFFu8; 56];
+        p_bytes[28] = 0xFE;
+        let mut p_plus_one = [0u8; 56];
+        for byte in p_plus_one.iter_mut().skip(28) {
+            *byte = 0xFF;
+        }
+
+        let low_order_points: [[u8; 56]; 4] = [[0u8; 56], u_one, p_bytes, p_plus_one];
 
         for low_order in &low_order_points {
             let public = PublicKey::from_bytes(*low_order);
-            let shared = secret.diffie_hellman(&public);
+            let mut shared = SharedSecret::default();
+            let result = secret.diffie_hellman_into(&public, &mut shared);
             assert!(
-                shared.is_zero(),
-                "low-order point should produce zero shared secret"
+                matches!(result, Err(X448Error::LowOrderPoint)),
+                "low-order point should be rejected"
             );
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_iteration_1000000() {
+        let mut k = BASEPOINT_U;
+        let mut u = BASEPOINT_U;
+
+        for _ in 0..1_000_000 {
+            let result = x448(&k, &u);
+            u = k;
+            k = result;
+        }
+
+        let expected: [u8; 56] = [
+            0x07, 0x7f, 0x45, 0x36, 0x81, 0xca, 0xca, 0x36, 0x93, 0x19, 0x84, 0x20, 0xbb, 0xe5,
+            0x15, 0xca, 0xe0, 0x00, 0x24, 0x72, 0x51, 0x9b, 0x3e, 0x67, 0x66, 0x1a, 0x7e, 0x89,
+            0xca, 0xb9, 0x46, 0x95, 0xc8, 0xf4, 0xbc, 0xd6, 0x6e, 0x61, 0xb9, 0xb9, 0xc9, 0x46,
+            0xda, 0x8d, 0x52, 0x4d, 0xe3, 0xd6, 0x9b, 0xd9, 0xd9, 0xd6, 0x6b, 0x99, 0x7e, 0x37,
+        ];
+        assert_eq!(k, expected);
     }
 }

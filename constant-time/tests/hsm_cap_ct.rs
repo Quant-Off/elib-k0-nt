@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use constant_time::{Choice, CtEqOps};
+    use constant_time::Choice;
+    use constant_time::traits::CtEqOps;
     use std::hint::black_box;
 
     // Mock HsmCapability — mirrors iso-light-k0::hsm_registry::HsmCapability layout
@@ -32,10 +33,10 @@ mod tests {
     // is_valid_for 의 3-predicate AND를 인라인 복제. 분기 없는 CT-AND 그대로 — Pitfall 1 회피.
     #[inline(never)]
     fn check(token: u64, slot_a: u8, slot_b: u8, rights: u16, required: u16) -> bool {
-        let t: Choice = CtEqOps::ne(&token, &0u64);
-        let s: Choice = CtEqOps::eq(&slot_a, &slot_b);
+        let t: Choice = CtEqOps::ct_ne(&token, &0u64);
+        let s: Choice = CtEqOps::ct_eq(&slot_a, &slot_b);
         let masked: u16 = rights & required;
-        let r: Choice = CtEqOps::eq(&masked, &required);
+        let r: Choice = CtEqOps::ct_eq(&masked, &required);
         (t & s & r).unwrap_u8() == 1
     }
 

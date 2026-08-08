@@ -56,6 +56,7 @@ PROBES_CT=(
 )
 # swap probe 는 별도 — volatile zero store 존재도 함께 확인
 PROBES_SWAP=(probe_swap_u64 probe_swap_u128)
+PROBES_EQ_ARR=(probe_eq_arr_u8_32)
 # zeroize probe 는 별도 크레이트(zeroize) 소속 — 별도 빌드/디스어셈블 후
 # volatile zero store + 메모리 배리어 fence 잔존을 함께 검증한다.
 PROBES_ZEROIZE=(probe_secret_drop probe_zeroize_flat)
@@ -70,6 +71,7 @@ case "${ARCH}" in
         ZERO_STORE_RE='\b(mov[bwlq]?[[:space:]]+\$0x?0+,|mov[[:space:]]+(byte|BYTE)[[:space:]]+(ptr|PTR)[^,]*,[[:space:]]*0|xor[bwlq]?[[:space:]]+%[a-z0-9]+,[[:space:]]*%[a-z0-9]+)'
         # x86_64 메모리 배리어 fence: mfence (zeroize 경로 생존 검증).
         FENCE_RE='\bmfence\b'
+        CALL_CMP_RE='\b(call|jmp)\b.*(memcmp|bcmp)'
         ;;
     aarch64)
         # 조건분기: b.cond (b.eq, b.ne, …), cbz, cbnz, tbz, tbnz
@@ -79,6 +81,7 @@ case "${ARCH}" in
         ZERO_STORE_RE='\b(strb?|str|stp)[[:space:]]+(wzr|xzr)\b'
         # aarch64 메모리 배리어 fence: dmb / dsb (zeroize 경로 생존 검증).
         FENCE_RE='\b(dmb|dsb)\b'
+        CALL_CMP_RE='\b(bl|b)[[:space:]].*(memcmp|bcmp)'
         ;;
     *)
         echo "FAIL: 미지원 호스트 아키텍처: ${ARCH}" >&2
@@ -151,6 +154,32 @@ for sym in "${PROBES_SWAP[@]}"; do
     else
         cnt=$(grep -v '^#' "${TMPDIR}/${sym}.s" | grep -cE "${ZERO_STORE_RE}" || true)
         echo "    PASS ${sym} — zero store ${cnt} 건 잔존"
+    fi
+done
+
+echo ">> 배열 ct_eq probe (카운티드 back-edge 분기 1건 허용 + memcmp 치환 부재)"
+# 주의 — [T; N] ct_eq 의 fold 는 N 이라는 컴파일타임 상수 종료조건 루프로
+# 컴파일되며 back-edge 조건분기 1건은 카운터(공개 값) 의존이라 CT 보장이
+# 유지된다. 비밀 의존 조기 종료 회귀가 생기면 누산기/데이터 조건분기가
+# 추가되므로 조건분기 허용 상한을 1로 고정해 검출한다. memcmp/bcmp 호출
+# 검사는 컴파일러의 비-CT 라이브러리 치환 회귀를 차단한다.
+for sym in "${PROBES_EQ_ARR[@]}"; do
+    extract_symbol "${sym}" "${TMPDIR}/${sym}.s"
+    if [[ ! -s "${TMPDIR}/${sym}.s" ]]; then
+        echo "    SKIP ${sym} — 심볼 미발견"
+        continue
+    fi
+    br_cnt=$(grep -v '^#' "${TMPDIR}/${sym}.s" | grep -cE "${BRANCH_RE}" || true)
+    if [[ "${br_cnt}" -gt 1 ]]; then
+        echo "    FAIL ${sym} — 조건분기 ${br_cnt} 건 > 허용 1 건 (비밀 의존 조기 종료 회귀 의심):"
+        grep -nE "${BRANCH_RE}" "${TMPDIR}/${sym}.s" | sed 's/^/        /'
+        fail=1
+    elif grep -E "${CALL_CMP_RE}" "${TMPDIR}/${sym}.s" >/dev/null 2>&1; then
+        echo "    FAIL ${sym} — memcmp/bcmp 호출 검출 (비-CT 라이브러리 치환 회귀):"
+        grep -nE "${CALL_CMP_RE}" "${TMPDIR}/${sym}.s" | sed 's/^/        /'
+        fail=1
+    else
+        echo "    PASS ${sym} — 조건분기 ${br_cnt} 건 (허용 상한 1 = 상수 종료조건 back-edge)"
     fi
 done
 

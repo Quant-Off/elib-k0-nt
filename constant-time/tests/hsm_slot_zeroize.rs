@@ -5,7 +5,8 @@ mod tests {
 
     // 카운팅 fixture — 스택 메모리 재사용으로 raw-pointer 읽기는 UB이므로(RESEARCH §10.6 L1114-1116)
     // Drop 도달 여부를 관찰 가능한 AtomicUsize 카운터로 잡는다 (Pitfall 4 회피).
-    static ZEROIZE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    // 카운터는 테스트별 전용 static 을 슬롯에 주입한다 — 전역 카운터 하나를 공유하면
+    // 병렬 테스트 하네스에서 다른 테스트의 store(0) 리셋이 Drop 증가분을 지우는 경쟁이 생긴다.
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(u8)]
@@ -19,14 +20,16 @@ mod tests {
         state: HsmSlotState,
         token: u64,
         rights: u16,
+        zeroize_count: &'static AtomicUsize,
     }
 
     impl TestSlot {
-        fn new_attached(token: u64, rights: u16) -> Self {
+        fn new_attached(token: u64, rights: u16, zeroize_count: &'static AtomicUsize) -> Self {
             Self {
                 state: HsmSlotState::Attached,
                 token,
                 rights,
+                zeroize_count,
             }
         }
 
@@ -34,7 +37,7 @@ mod tests {
             self.token = 0;
             self.rights = 0;
             self.state = HsmSlotState::Empty;
-            ZEROIZE_COUNT.fetch_add(1, Ordering::SeqCst);
+            self.zeroize_count.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -46,15 +49,15 @@ mod tests {
             self.token = 0;
             self.rights = 0;
             self.state = HsmSlotState::Empty;
-            ZEROIZE_COUNT.fetch_add(1, Ordering::SeqCst);
+            self.zeroize_count.fetch_add(1, Ordering::SeqCst);
         }
     }
 
     #[test]
     fn slot_zeroize_clears_token_and_state() {
-        ZEROIZE_COUNT.store(0, Ordering::SeqCst);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        let mut slot = TestSlot::new_attached(0xDEAD_BEEF_CAFE_BABE, 0x07);
+        let mut slot = TestSlot::new_attached(0xDEAD_BEEF_CAFE_BABE, 0x07, &COUNT);
         slot.zeroize_inline();
 
         // 명시 zeroize 직후 fields 가 모두 0 / Empty 인지 확인 (Pitfall 4: black_box 로 DCE 차단).
@@ -62,32 +65,32 @@ mod tests {
         assert_eq!(black_box(slot.rights), 0);
         assert_eq!(slot.state, HsmSlotState::Empty);
         // slot 은 본 스코프 종료 시 drop -> 카운터 한 번 더 증가하지만 본 검사는 호출-시점만 본다.
-        assert!(ZEROIZE_COUNT.load(Ordering::SeqCst) >= 1);
+        assert!(COUNT.load(Ordering::SeqCst) >= 1);
     }
 
     #[test]
     fn drop_zeroizes_via_safety_net_counter() {
-        ZEROIZE_COUNT.store(0, Ordering::SeqCst);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
         {
-            let slot = TestSlot::new_attached(0x1234_5678_9ABC_DEF0, 0x05);
+            let slot = TestSlot::new_attached(0x1234_5678_9ABC_DEF0, 0x05, &COUNT);
             // black_box 로 컴파일러가 slot 을 즉시 dead-code 로 판단해 Drop 을 생략하지 못하도록 잡는다.
             black_box(&slot);
             // 스코프 종료 -> Drop -> 카운터 증가.
         }
         // Drop 만으로 관측: 명시 zeroize 호출 없이도 안전망이 동작했음.
         assert!(
-            ZEROIZE_COUNT.load(Ordering::SeqCst) >= 1,
+            COUNT.load(Ordering::SeqCst) >= 1,
             "Drop 안전망이 발화되지 않음 — Zeroize 보장 회귀"
         );
     }
 
     #[test]
     fn early_return_zeroize_path() {
-        ZEROIZE_COUNT.store(0, Ordering::SeqCst);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
 
         // 시나리오: detach 진입 후 in-flight 정리 중 early return 경로에서도
         // zeroize 가 발생해야 함(D-14: 모든 종료 경로 소거 보장).
-        let mut slot = TestSlot::new_attached(0xFEED_FACE_F00D_BABE, 0x07);
+        let mut slot = TestSlot::new_attached(0xFEED_FACE_F00D_BABE, 0x07, &COUNT);
 
         // Attached -> Detaching 전이
         slot.state = HsmSlotState::Detaching;
@@ -98,6 +101,6 @@ mod tests {
         assert_eq!(slot.state, HsmSlotState::Empty);
         assert_eq!(black_box(slot.token), 0);
         assert_eq!(black_box(slot.rights), 0);
-        assert!(ZEROIZE_COUNT.load(Ordering::SeqCst) >= 1);
+        assert!(COUNT.load(Ordering::SeqCst) >= 1);
     }
 }

@@ -1,5 +1,6 @@
 use crate::{Digest, SHA512State};
-use constant_time::{Choice, CtEqOps, CtGreeter, CtSelOps};
+use constant_time::Choice;
+use constant_time::traits::{CtEqOps, CtGtOps, CtSelOps};
 use zeroize::{Secret, Zeroize};
 
 const SHA_512_K: [u64; 80] = [
@@ -224,7 +225,7 @@ impl SHA512State {
             //   select(a, b, choice) -> choice==1일 때 b, choice==0일 때 a
             //   is_ge==1 (remain >= fill) -> fill   (현재 블록 완료)
             //   is_ge==0 (remain <  fill) -> remain (남은 것을 가져옴)
-            let is_ge: Choice = CtGreeter::gt(&remain, &fill) | CtEqOps::eq(&remain, &fill);
+            let is_ge: Choice = CtGtOps::ct_gt(&remain, &fill) | CtEqOps::ct_eq(&remain, &fill);
             let chunk_len: usize = usize::select(&remain, &fill, is_ge);
 
             self.buffer[self.buffer_len..self.buffer_len + chunk_len]
@@ -255,7 +256,7 @@ impl SHA512State {
         //   SHA-512 블록 = 128바이트, 메시지 길이는 마지막 16바이트를 차지함
         //   needs_extra == 1  -> buffer_len > 112: 길이는 두 번째 블록으로 가야 함
         //   needs_extra == 0  -> buffer_len ≤ 112: 길이는 이 블록에 맞음
-        let needs_extra: Choice = CtGreeter::gt(&self.buffer_len, &112usize);
+        let needs_extra: Choice = CtGtOps::ct_gt(&self.buffer_len, &112usize);
         let not_extra: Choice = !needs_extra;
 
         // SHA-512는 128비트 메시지 길이 필드를 사용함 (FIPS 180-4 §5.1.2)

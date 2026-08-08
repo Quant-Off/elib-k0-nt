@@ -28,11 +28,8 @@
 //! - `Deref` / `DerefMut` / `AsRef` 미구현 — 내부 참조가 typestate 밖으로 escape 되어
 //!   consume-on-dissolve invariant 를 우회하는 위험 차단 (정책적 결정).
 //! - `consume_into(dst)` dissolve 경로는 v1 미포함 — Phase 4/5 에서 추가 예정.
-//!
-//! # Authors
-//! Q. T. Felix
 
-use ::zeroize::{Secret, Zeroize};
+use ::zeroize::{Secret, Zeroable, Zeroize};
 
 pub(crate) mod sealed {
     /// 봉인용 마커 트레이트입니다. `elib-k0-ipc` 외부에서는 구현 불가합니다.
@@ -62,8 +59,8 @@ pub(crate) mod sealed {
 /// ```
 pub trait IsSecret: sealed::Sealed {}
 
-impl<T: Zeroize> sealed::Sealed for Secret<T> {}
-impl<T: Zeroize> IsSecret for Secret<T> {}
+impl<T: Zeroize + Zeroable> sealed::Sealed for Secret<T> {}
+impl<T: Zeroize + Zeroable> IsSecret for Secret<T> {}
 
 impl<T: IsSecret> sealed::Sealed for MustZeroize<T> {}
 impl<T: IsSecret> IsSecret for MustZeroize<T> {}

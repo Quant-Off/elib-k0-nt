@@ -8,8 +8,7 @@
 #![allow(
     clippy::unusual_byte_groupings,
     clippy::wrong_self_convention,
-    clippy::needless_range_loop,
-    dead_code
+    clippy::needless_range_loop
 )]
 
 use core::ops::{Add, Mul, Sub};
@@ -21,6 +20,13 @@ pub const L_BYTES: [u8; 32] = [
     0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
 ];
+
+/// (L - 1) mod L = -1 (스칼라 부정에 사용)
+const MINUS_ONE: Scalar = {
+    let mut b = L_BYTES;
+    b[0] = L_BYTES[0] - 1;
+    Scalar(b)
+};
 
 /// L의 21-bit signed limb 분해 계수 (low 부분, l3/l5는 음수)
 /// L = 2^252 + (L0 + L1·2^21 + L2·2^42 + L3·2^63 + L4·2^84 + L5·2^105)
@@ -67,9 +73,11 @@ impl Scalar {
     pub fn from_bytes_mod_order_wide(bytes: &[u8; 64]) -> Self {
         let mut s = load_24_from_64(bytes);
         sc_reduce_24(&mut s);
-        Scalar(pack_12_to_32(&[
+        let out = Scalar(pack_12_to_32(&[
             s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11],
-        ]))
+        ]));
+        s.zeroize();
+        out
     }
 
     /// 바이트 배열을 반환합니다.
@@ -93,9 +101,9 @@ impl Scalar {
 
 /// 스칼라 곱셈 후 덧셈: (a · b + c) mod L
 pub fn sc_muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
-    let a_limbs = load_12_from_32(&a.0);
-    let b_limbs = load_12_from_32(&b.0);
-    let c_limbs = load_12_from_32(&c.0);
+    let mut a_limbs = load_12_from_32(&a.0);
+    let mut b_limbs = load_12_from_32(&b.0);
+    let mut c_limbs = load_12_from_32(&c.0);
 
     // s = c + a · b
     // i+j 위치에 a[i]·b[j] 곱을 누적; c는 0..11 에 더함
@@ -114,9 +122,16 @@ pub fn sc_muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
 
     sc_reduce_24(&mut s);
 
-    Scalar(pack_12_to_32(&[
+    let out = Scalar(pack_12_to_32(&[
         s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11],
-    ]))
+    ]));
+
+    // 비밀 스칼라에서 유래한 limb 중간값 소거
+    a_limbs.zeroize();
+    b_limbs.zeroize();
+    c_limbs.zeroize();
+    s.zeroize();
+    out
 }
 
 /// 24-limb 배열에 대한 첫 rounded 캐리 전파 (짝수 → 홀수, 인덱스 0..22).
@@ -216,9 +231,8 @@ impl Sub for Scalar {
 
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn sub(self, rhs: Self) -> Self {
-        // a - b = a + (L - b) mod L
-        // (-1) · rhs + 0 = -rhs (mod L)
-        let neg_rhs = sc_muladd(&Scalar([0xff; 32]), &rhs, &Scalar::zero());
+        // a - b = a + (-1)*b mod L, (-1) = (L - 1) mod L
+        let neg_rhs = sc_muladd(&MINUS_ONE, &rhs, &Scalar::zero());
         sc_muladd(&Scalar::one(), &self, &neg_rhs)
     }
 }

@@ -9,11 +9,11 @@ mod tests {
     const NONCE: [u8; 16] = [0x37u8; 16];
 
     fn fresh_drbg() -> HashDRBGSHA256 {
+        let mut drbg = HashDRBGSHA256::default();
         // SAFETY: 테스트 전용 결정론적 시드 (보안 강도 무관, 회귀 비교만 수행)
-        unsafe {
-            HashDRBGSHA256::new_from_entropy(&ENTROPY, &NONCE, None)
-                .expect("instantiate HashDRBGSHA256")
-        }
+        unsafe { drbg.init_from_entropy(&ENTROPY, &NONCE, None) }
+            .expect("instantiate HashDRBGSHA256");
+        drbg
     }
 
     fn gen_token_u64_local(drbg: &mut HashDRBGSHA256) -> u64 {

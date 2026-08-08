@@ -5,12 +5,15 @@ mod chacha20;
 mod poly1305;
 
 use chacha20::ChaCha20;
-use constant_time::{Choice, CtEqOps};
+use constant_time::Choice;
+use constant_time::traits::CtEqOps;
 use poly1305::{Poly1305, poly1305_verify};
 use zeroize::{Secret, Zeroize};
 
 pub use chacha20::ChaCha20 as ChaCha20Core;
 pub use poly1305::Poly1305 as Poly1305Core;
+
+const CHACHA20_MAX_INPUT_LEN: u64 = (u32::MAX as u64) * 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -21,15 +24,22 @@ pub enum Error {
     BufferTooSmall,
 }
 
+#[derive(Default)]
 pub struct ChaCha20Poly1305 {
     key: Secret<[u8; 32]>,
 }
 
 impl ChaCha20Poly1305 {
-    pub fn new(key: &[u8; 32]) -> Self {
-        Self {
-            key: Secret::new(*key),
-        }
+    /// 256비트 키를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 인스턴스를 최종 위치에 둔 뒤 호출하면
+    /// move 로 인한 키 스택 잔류가 없습니다.
+    pub fn init(&mut self, key: &[u8; 32]) {
+        self.key.init_with(|k| *k = *key);
     }
 
     pub fn encrypt(
@@ -43,14 +53,20 @@ impl ChaCha20Poly1305 {
         if ciphertext.len() < plaintext.len() {
             return Err(Error::BufferTooSmall);
         }
+        assert!(
+            plaintext.len() as u64 <= CHACHA20_MAX_INPUT_LEN,
+            "RFC 8439 입력 길이 한계(2^32-1 블록) 초과로 카운터 재사용 발생"
+        );
 
-        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
+        let mut chacha = ChaCha20::default();
+        chacha.init(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         ciphertext[..plaintext.len()].copy_from_slice(plaintext);
         chacha.apply_keystream(&mut ciphertext[..plaintext.len()]);
 
-        let mut poly = Poly1305::new(&poly_key);
+        let mut poly = Poly1305::default();
+        poly.init(&poly_key);
 
         poly.update(aad);
         if aad.len() % 16 != 0 {
@@ -89,11 +105,17 @@ impl ChaCha20Poly1305 {
         if plaintext.len() < ciphertext.len() {
             return Err(Error::BufferTooSmall);
         }
+        assert!(
+            ciphertext.len() as u64 <= CHACHA20_MAX_INPUT_LEN,
+            "RFC 8439 입력 길이 한계(2^32-1 블록) 초과로 카운터 재사용 발생"
+        );
 
-        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
+        let mut chacha = ChaCha20::default();
+        chacha.init(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
-        let mut poly = Poly1305::new(&poly_key);
+        let mut poly = Poly1305::default();
+        poly.init(&poly_key);
 
         poly.update(aad);
         if aad.len() % 16 != 0 {
@@ -112,10 +134,13 @@ impl ChaCha20Poly1305 {
         lengths[8..16].copy_from_slice(&(ciphertext.len() as u64).to_le_bytes());
         poly.update(&lengths);
 
-        let computed_tag = poly.finalize();
+        let mut computed_tag = poly.finalize();
+        let tag_ok = poly1305_verify(&computed_tag, tag);
+        computed_tag.zeroize();
 
-        if !poly1305_verify(&computed_tag, tag) {
+        if !tag_ok {
             poly_key.zeroize();
+            lengths.zeroize();
             return Err(Error::AuthenticationFailed);
         }
 
@@ -138,13 +163,19 @@ impl ChaCha20Poly1305 {
         if buffer.len() < plaintext_len {
             return Err(Error::BufferTooSmall);
         }
+        assert!(
+            plaintext_len as u64 <= CHACHA20_MAX_INPUT_LEN,
+            "RFC 8439 입력 길이 한계(2^32-1 블록) 초과로 카운터 재사용 발생"
+        );
 
-        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
+        let mut chacha = ChaCha20::default();
+        chacha.init(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
         chacha.apply_keystream(&mut buffer[..plaintext_len]);
 
-        let mut poly = Poly1305::new(&poly_key);
+        let mut poly = Poly1305::default();
+        poly.init(&poly_key);
 
         poly.update(aad);
         if aad.len() % 16 != 0 {
@@ -182,11 +213,17 @@ impl ChaCha20Poly1305 {
         if buffer.len() < ciphertext_len {
             return Err(Error::BufferTooSmall);
         }
+        assert!(
+            ciphertext_len as u64 <= CHACHA20_MAX_INPUT_LEN,
+            "RFC 8439 입력 길이 한계(2^32-1 블록) 초과로 카운터 재사용 발생"
+        );
 
-        let mut chacha = ChaCha20::new(self.key.expose(), nonce);
+        let mut chacha = ChaCha20::default();
+        chacha.init(self.key.expose(), nonce);
         let mut poly_key = chacha.generate_poly1305_key();
 
-        let mut poly = Poly1305::new(&poly_key);
+        let mut poly = Poly1305::default();
+        poly.init(&poly_key);
 
         poly.update(aad);
         if aad.len() % 16 != 0 {
@@ -205,10 +242,13 @@ impl ChaCha20Poly1305 {
         lengths[8..16].copy_from_slice(&(ciphertext_len as u64).to_le_bytes());
         poly.update(&lengths);
 
-        let computed_tag = poly.finalize();
+        let mut computed_tag = poly.finalize();
+        let tag_ok = poly1305_verify(&computed_tag, tag);
+        computed_tag.zeroize();
 
-        if !poly1305_verify(&computed_tag, tag) {
+        if !tag_ok {
             poly_key.zeroize();
+            lengths.zeroize();
             return Err(Error::AuthenticationFailed);
         }
 
@@ -221,10 +261,11 @@ impl ChaCha20Poly1305 {
     }
 }
 
+#[must_use]
 pub fn verify_tag(computed: &[u8; 16], expected: &[u8; 16]) -> bool {
     let mut eq = Choice::from_u8(1);
     for i in 0..16 {
-        eq &= CtEqOps::eq(&computed[i], &expected[i]);
+        eq &= CtEqOps::ct_eq(&computed[i], &expected[i]);
     }
     eq.unwrap_u8() == 1
 }
@@ -241,7 +282,8 @@ mod tests {
         let mut storage: MaybeUninit<ChaCha20Poly1305> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(ChaCha20Poly1305::new(&key));
+            storage.write(ChaCha20Poly1305::default());
+            storage.assume_init_mut().init(&key);
             let key_ptr = storage.assume_init_ref().key.expose().as_ptr();
 
             let pre = core::slice::from_raw_parts(key_ptr, 32);
@@ -292,7 +334,8 @@ mod tests {
             0x06, 0x91,
         ];
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut ciphertext = [0u8; 114];
         let mut tag = [0u8; 16];
@@ -316,7 +359,8 @@ mod tests {
         let aad = b"additional data";
         let plaintext = b"Hello, World!";
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut ciphertext = [0u8; 13];
         let mut tag = [0u8; 16];
@@ -337,7 +381,8 @@ mod tests {
         let aad = b"additional data";
         let plaintext = b"Hello, World!";
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut ciphertext = [0u8; 13];
         let mut tag = [0u8; 16];
@@ -358,7 +403,8 @@ mod tests {
         let aad = b"additional data";
         let plaintext = b"Hello, World!";
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut buffer = [0u8; 13];
         buffer.copy_from_slice(plaintext);
@@ -380,7 +426,8 @@ mod tests {
         let aad = b"only aad, no plaintext";
         let plaintext: &[u8] = b"";
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut ciphertext = [0u8; 0];
         let mut tag = [0u8; 16];
@@ -399,7 +446,8 @@ mod tests {
         let aad: &[u8] = b"";
         let plaintext = b"plaintext only";
 
-        let aead = ChaCha20Poly1305::new(&key);
+        let mut aead = ChaCha20Poly1305::default();
+        aead.init(&key);
 
         let mut ciphertext = [0u8; 14];
         let mut tag = [0u8; 16];

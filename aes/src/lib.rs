@@ -17,17 +17,15 @@
 //! let nonce = [0u8; GCM_NONCE_SIZE];
 //! let plaintext = b"Hello, World!!!!";
 //!
-//! let gcm = AES256GCM::new(&key);
+//! let mut gcm = AES256GCM::default();
+//! gcm.init(&key);
 //! let mut ciphertext = [0u8; 16];
 //! let mut tag = [0u8; GCM_TAG_SIZE];
-//! gcm.encrypt(&nonce, &[], plaintext, &mut ciphertext, &mut tag);
+//! gcm.encrypt(&nonce, &[], plaintext, &mut ciphertext, &mut tag).unwrap();
 //! ```
 //!
 //! # Security Note
 //! 모든 키 및 라운드 키는 Drop 시 강제 소거됩니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 #![cfg_attr(not(test), no_std)]
 
@@ -41,12 +39,21 @@ mod sbox;
 
 pub use cbc::{AES256CBC, CBC_IV_SIZE};
 pub use ctr::{AES256CTR, CTR_IV_SIZE, CTR_NONCE_SIZE};
-pub use gcm::{AES256GCM, GCM_NONCE_SIZE, GCM_TAG_SIZE};
+pub use gcm::{AES256GCM, GCM_MIN_TAG_SIZE, GCM_NONCE_SIZE, GCM_TAG_SIZE};
 pub use ghash::GHash;
 
 use block::{decrypt_block, encrypt_block};
 use key::expand_key;
 use zeroize::Secret;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    InvalidLength,
+    BufferTooSmall,
+    InputTooLong,
+    AadTooLong,
+    AuthenticationFailed,
+}
 
 const NB: usize = 4;
 const NR: usize = 14;
@@ -61,16 +68,25 @@ pub struct AES256 {
     round_keys: Secret<[u32; NB * (NR + 1)]>,
 }
 
+impl Default for AES256 {
+    fn default() -> Self {
+        Self {
+            round_keys: Secret::new([0u32; NB * (NR + 1)]),
+        }
+    }
+}
+
 impl AES256 {
-    /// 256비트 키로 AES-256 인스턴스를 생성합니다.
+    /// 256비트 키를 제자리에서 확장해 라운드 키를 설정합니다.
     ///
     /// # Arguments
     /// - `key`: 32바이트 암호화 키
-    #[must_use]
-    pub fn new(key: &[u8; KEY_SIZE]) -> Self {
-        Self {
-            round_keys: Secret::new(expand_key(key)),
-        }
+    ///
+    /// # Security Note
+    /// by-value 생성자 대신 `Default` 로 만든 인스턴스를 최종 위치에 둔 뒤
+    /// 이 함수로 초기화하면 move 로 인한 라운드 키 스택 잔류가 없습니다.
+    pub fn init(&mut self, key: &[u8; KEY_SIZE]) {
+        self.round_keys.init_with(|w| expand_key(key, w));
     }
 
     /// 16바이트 블록을 암호화합니다.
@@ -97,23 +113,23 @@ mod tests {
     use super::*;
     use core::mem::MaybeUninit;
 
-    /// AES256 의 round_keys 는 expand_key 결과로 키 정보를 포함.
-    /// Drop 후 round_keys 메모리가 0 으로 소거되는지 검증.
+    // AES256의 round_keys는 expand_key 결과로 키 정보를 포함함
+    // Drop 후 round_keys 메모리가 0으로 소거되는지 검증
     #[test]
     fn test_aes256_zeroize_on_drop() {
         let key = [0xA5u8; KEY_SIZE];
         let mut storage: MaybeUninit<AES256> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(AES256::new(&key));
-            // Secret<[u32; 60]> 의 inner 위치에 round_keys 저장
+            storage.write(AES256::default());
+            storage.assume_init_mut().init(&key);
             let ptr = storage.assume_init_ref().round_keys.expose().as_ptr() as *const u8;
-            let byte_len = core::mem::size_of::<[u32; NB * (NR + 1)]>();
+            let byte_len = size_of::<[u32; NB * (NR + 1)]>();
 
             let pre = core::slice::from_raw_parts(ptr, byte_len);
             assert!(
                 pre.iter().any(|&b| b != 0),
-                "round_keys 가 비어 있음 — expand_key 가 동작하지 않음"
+                "round_keys 가 비어 있음, expand_key 가 동작하지 않음"
             );
 
             storage.assume_init_drop();
@@ -121,7 +137,7 @@ mod tests {
             let post = core::slice::from_raw_parts(ptr, byte_len);
             assert!(
                 post.iter().all(|&b| b == 0),
-                "AES256 round_keys 가 Drop 후 소거되지 않음"
+                "AES256 round_keys가 Drop 후 소거되지 않음"
             );
         }
     }
@@ -142,7 +158,8 @@ mod tests {
             0x60, 0x89,
         ];
 
-        let cipher = AES256::new(&key);
+        let mut cipher = AES256::default();
+        cipher.init(&key);
         let ciphertext = cipher.encrypt(&plaintext);
         assert_eq!(ciphertext, expected_ciphertext);
 
@@ -162,7 +179,8 @@ mod tests {
             0x00, 0x00,
         ];
 
-        let cipher = AES256::new(&key);
+        let mut cipher = AES256::default();
+        cipher.init(&key);
         let ciphertext = cipher.encrypt(&plaintext);
         let decrypted = cipher.decrypt(&ciphertext);
         assert_eq!(decrypted, plaintext);

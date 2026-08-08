@@ -1,12 +1,5 @@
-use zeroize::Zeroize;
+use zeroize::{Secret, Zeroize};
 
-// 32 비트 다항식(carryless) 곱셈
-// BearSSL `bmul32` 트릭: 피연산자를 4비트 간격 (mask 0x1111_1111) 로 4등분하여
-// 일반 정수 곱셈으로 GF(2)[X] 곱을 얻음. 32비트 입력 기준 한 lane당 최대 8개
-// 부분곱이 합산되며 (8 < 16), 4비트 lane안에 carry없이 들어가므로 정확히 다항식 비트가 추출
-//
-// AES-NI/PCLMULQDQ 미지원 환경 (TCG 등) 에서 정수 곱셈만으로 상수-시간으로 실행됨
-// (AMD64/AArch64 정수 곱셈은 데이터 비종속 시간 보장, todo: 근데 추가적인 구글링 필요)
 #[inline]
 const fn bmul32(x: u32, y: u32) -> u64 {
     const MX0: u32 = 0x1111_1111;
@@ -36,8 +29,6 @@ const fn bmul32(x: u32, y: u32) -> u64 {
     (z0 & MZ0) | (z1 & MZ1) | (z2 & MZ2) | (z3 & MZ3)
 }
 
-// 64 비트 다항식 곱셈을 32 비트 Karatsuba 로 합성
-//   (xh·X^32 + xl)(yh·X^32 + yl) = xh·yh·X^64 + (xh·yl ⊕ xl·yh)·X^32 + xl·yl
 #[inline]
 fn bmul64(x: u64, y: u64) -> u128 {
     let xh = (x >> 32) as u32;
@@ -53,8 +44,6 @@ fn bmul64(x: u64, y: u64) -> u128 {
     p_ll ^ (p_mid << 32) ^ (p_hh << 64)
 }
 
-// 128비트 다항식 곱. 256비트 결과를 (low_128, high_128)로 반환
-// 64비트 Karatsuba 합성: 3회의 bmul64 호출
 #[inline]
 fn poly_mul_128(x: u128, y: u128) -> (u128, u128) {
     let xh = (x >> 64) as u64;
@@ -71,13 +60,7 @@ fn poly_mul_128(x: u128, y: u128) -> (u128, u128) {
     let hi = p_hh ^ (p_mid >> 64);
     (lo, hi)
 }
-// (lo, hi) 의 256 비트 다항식을 p(X) = X^128 + X^7 + X^2 + X + 1 로 환원 (자연 순서)
-// hi 의 i 번째 비트는 X^(128+i), 그리고 X^128 ≡ X^7 + X^2 + X + 1 (mod p)
-// 구글링해보니
-//   T = hi · (1 + X + X^2 + X^7), 차수 ≤ 134
-//   T_lo  = u128폭 안의 비트 (0..127)
-//   T_hi  = 오버플로우 비트 (128..134, 7비트)
-//   T_hi 를 같은 식으로 한번 더 환원 (차수 ≤ 13, 추가 오버플로우 없음)
+
 #[inline]
 fn reduce_natural(lo: u128, hi: u128) -> u128 {
     let t_lo = hi ^ (hi << 1) ^ (hi << 2) ^ (hi << 7);
@@ -86,9 +69,9 @@ fn reduce_natural(lo: u128, hi: u128) -> u128 {
     lo ^ t_lo ^ t2
 }
 
-/// 테스트 검증용 GHASH 비트역순 표기에서의 GF(2^128) 곱셈
-/// 입력 `x`, `y` 는 `u128::from_be_bytes` 결과 (NIST SP 800-38D의 비트역순 표현) 를 가정합니다.
-/// `GHash::update` 는 H의 사전 변환 결과를 캐시하므로 이 래퍼를 사용하지 않습니다.
+/// 테스트 검증용 GHASH 비트-역순 표기에서의 GF(2^128) 곱셈
+/// 입력 `x`, `y`는 `u128::from_be_bytes` 결과(NIST SP 800-38D의 비트역순 표현)를 가정합니다.
+/// `GHash::update`는 H의 사전 변환 결과를 캐시하므로 이 래퍼를 사용하지 않습니다.
 #[inline]
 #[must_use]
 #[cfg(test)]
@@ -99,27 +82,28 @@ fn gf128_mul(x: u128, y: u128) -> u128 {
     reduce_natural(lo, hi).reverse_bits()
 }
 
+#[derive(Default)]
 pub struct GHash {
-    // 자연 순서로 변환된 H. 매 update 마다의 비트 역변환 비용 제거
-    h_n: u128,
-    // 자연 순서 누적 상태. finalize 시점에 GHASH 표기로 역변환
-    state_n: u128,
+    h_n: Secret<u128>,
+    state_n: Secret<u128>,
 }
 
 impl GHash {
-    #[must_use]
-    pub fn new(h: &[u8; 16]) -> Self {
-        Self {
-            h_n: u128::from_be_bytes(*h).reverse_bits(),
-            state_n: 0,
-        }
+    /// 인증 서브키를 제자리에서 설정하고 상태를 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `h`: 16바이트 인증 서브키
+    pub fn init(&mut self, h: &[u8; 16]) {
+        self.h_n
+            .init_with(|v| *v = u128::from_be_bytes(*h).reverse_bits());
+        self.state_n.zeroize();
     }
 
     pub fn update(&mut self, block: &[u8; 16]) {
         let x_n = u128::from_be_bytes(*block).reverse_bits();
-        let combined = self.state_n ^ x_n;
-        let (lo, hi) = poly_mul_128(combined, self.h_n);
-        self.state_n = reduce_natural(lo, hi);
+        let combined = *self.state_n.expose() ^ x_n;
+        let (lo, hi) = poly_mul_128(combined, *self.h_n.expose());
+        *self.state_n.expose_mut() = reduce_natural(lo, hi);
     }
 
     pub fn update_padded(&mut self, data: &[u8]) {
@@ -137,19 +121,19 @@ impl GHash {
         }
     }
 
+    /// 누적 상태를 태그로 출력하고 상태를 제자리에서 소거합니다.
+    ///
+    /// # Security Note
+    /// `self` 를 이동 소비하지 않으므로 원본 슬롯에 사본이 남지 않으며,
+    /// 서브키 소거는 스코프 종료 시 `Drop` 이 제자리에서 수행합니다.
     #[must_use]
-    pub fn finalize(self) -> [u8; 16] {
-        self.state_n.reverse_bits().to_be_bytes()
+    pub fn finalize(&mut self) -> [u8; 16] {
+        let tag = self.state_n.expose().reverse_bits().to_be_bytes();
+        self.state_n.zeroize();
+        tag
     }
 
     pub fn reset(&mut self) {
-        self.state_n = 0;
-    }
-}
-
-impl Drop for GHash {
-    fn drop(&mut self) {
-        self.h_n.zeroize();
         self.state_n.zeroize();
     }
 }
@@ -159,20 +143,20 @@ mod tests {
     use super::*;
     use core::mem::MaybeUninit;
 
-    /// GHash 의 h (인증 서브키) 와 state 는 모두 비밀.
-    /// Drop 후 메모리가 0 으로 소거되는지 검증.
+    // GHash 의 h(인증 서브키)와 state는 모두 비밀
+    // Drop 후 메모리가 0으로 소거되는지 검증
     #[test]
     fn test_ghash_zeroize_on_drop() {
         let h: [u8; 16] = [0xDEu8; 16];
         let mut storage: MaybeUninit<GHash> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(GHash::new(&h));
-            // update 로 state 를 0 이 아닌 값으로 만듦
+            storage.write(GHash::default());
+            (*storage.as_mut_ptr()).init(&h);
             (*storage.as_mut_ptr()).update(&[0xAAu8; 16]);
 
-            let h_ptr = &raw const (*storage.as_ptr()).h_n as *const u8;
-            let s_ptr = &raw const (*storage.as_ptr()).state_n as *const u8;
+            let h_ptr = (*storage.as_ptr()).h_n.expose() as *const u128 as *const u8;
+            let s_ptr = (*storage.as_ptr()).state_n.expose() as *const u128 as *const u8;
 
             let pre_h = core::slice::from_raw_parts(h_ptr, 16);
             let pre_s = core::slice::from_raw_parts(s_ptr, 16);
@@ -203,7 +187,8 @@ mod tests {
             0xde, 0xb7,
         ];
 
-        let mut ghash = GHash::new(&h);
+        let mut ghash = GHash::default();
+        ghash.init(&h);
         ghash.update(&data);
         let result = ghash.finalize();
         assert_eq!(result, expected);
@@ -217,7 +202,7 @@ mod tests {
         assert_eq!(gf128_mul(a, b), expected);
     }
 
-    /// bmul32가 carryless (GF(2)[X]) 다항식 곱과 일치하는지 검증합니다.
+    /// bmul32가 carryless(GF(2)[X]) 다항식 곱과 일치하는지 검증합니다.
     #[test]
     fn bmul32_against_bitserial() {
         fn bitserial(x: u32, y: u32) -> u64 {

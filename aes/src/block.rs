@@ -1,6 +1,9 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::sbox::{inv_sub_bytes_block, sub_bytes_block};
+use constant_time::Choice;
+use constant_time::traits::*;
+use zeroize::Zeroize;
 
 const NB: usize = 4;
 const NR: usize = 14;
@@ -29,9 +32,6 @@ pub fn state_to_block(state: &State) -> [u8; 16] {
     block
 }
 
-// SubBytes 는 셀 위치에 의존 안해서 행렬 -> 16 바이트 -> BP 회로 -> 16 바이트
-// -> 행렬 순서로 우회됌. 비트슬라이스 변환/복원 비용은 라운드 1회 약 60게이트
-// 수준으로, 셀별 256회 스캔(이전) 보다 압도적으로 작다!
 #[inline]
 fn sub_bytes(state: &mut State) {
     let mut bytes = [0u8; 16];
@@ -46,6 +46,7 @@ fn sub_bytes(state: &mut State) {
             state[r][c] = bytes[r * 4 + c];
         }
     }
+    bytes.zeroize();
 }
 
 #[inline]
@@ -62,6 +63,7 @@ fn inv_sub_bytes(state: &mut State) {
             state[r][c] = bytes[r * 4 + c];
         }
     }
+    bytes.zeroize();
 }
 
 #[inline]
@@ -110,18 +112,18 @@ fn inv_shift_rows(state: &mut State) {
 
 #[inline]
 fn xtime(x: u8) -> u8 {
-    let hi = (x >> 7) & 1;
-    let shifted = x << 1;
-    shifted ^ (hi * 0x1b)
+    let hi = Choice::from_u8((x >> 7) & 1);
+    (x << 1) ^ u8::select(&0x00, &0x1b, hi)
 }
 
 #[inline]
 fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     let mut p = 0u8;
     for _ in 0..8 {
-        p ^= a & ((b & 1).wrapping_neg());
-        let hi = (a >> 7) & 1;
-        a = (a << 1) ^ (hi * 0x1b);
+        let bit = Choice::from_u8(b & 1);
+        p ^= u8::select(&0x00, &a, bit);
+        let hi = Choice::from_u8((a >> 7) & 1);
+        a = (a << 1) ^ u8::select(&0x00, &0x1b, hi);
         b >>= 1;
     }
     p
@@ -200,7 +202,9 @@ pub fn encrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8
     shift_rows(&mut state);
     add_round_key(&mut state, &round_keys[NR * NB..(NR + 1) * NB]);
 
-    state_to_block(&state)
+    let out = state_to_block(&state);
+    state.zeroize();
+    out
 }
 
 pub fn decrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8; 16] {
@@ -219,5 +223,7 @@ pub fn decrypt_block(block: &[u8; 16], round_keys: &[u32; NB * (NR + 1)]) -> [u8
     inv_sub_bytes(&mut state);
     add_round_key(&mut state, &round_keys[0..NB]);
 
-    state_to_block(&state)
+    let out = state_to_block(&state);
+    state.zeroize();
+    out
 }

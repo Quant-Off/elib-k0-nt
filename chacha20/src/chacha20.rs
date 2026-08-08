@@ -83,36 +83,53 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
     output
 }
 
+#[derive(Default)]
 pub struct ChaCha20 {
     key: Secret<[u8; 32]>,
     nonce: [u8; 12],
-    counter: u32,
+    counter: u64,
 }
 
 impl ChaCha20 {
-    pub fn new(key: &[u8; 32], nonce: &[u8; 12]) -> Self {
-        Self {
-            key: Secret::new(*key),
-            nonce: *nonce,
-            counter: 0,
-        }
+    /// 키와 논스를 제자리에서 설정하고 카운터를 0 으로 초기화합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    /// - `nonce`: 12바이트 논스
+    pub fn init(&mut self, key: &[u8; 32], nonce: &[u8; 12]) {
+        self.init_with_counter(key, nonce, 0);
     }
 
-    pub fn new_with_counter(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> Self {
-        Self {
-            key: Secret::new(*key),
-            nonce: *nonce,
-            counter,
-        }
+    /// 키·논스·초기 카운터를 제자리에서 설정합니다.
+    ///
+    /// # Arguments
+    /// - `key`: 32바이트 암호화 키
+    /// - `nonce`: 12바이트 논스
+    /// - `counter`: 초기 블록 카운터
+    pub fn init_with_counter(&mut self, key: &[u8; 32], nonce: &[u8; 12], counter: u32) {
+        self.key.init_with(|k| *k = *key);
+        self.nonce = *nonce;
+        self.counter = u64::from(counter);
     }
 
+    #[must_use]
     pub fn keystream_block(&mut self) -> [u8; 64] {
-        let block = chacha20_block(self.key.expose(), self.counter, &self.nonce);
-        self.counter = self.counter.wrapping_add(1);
+        assert!(
+            self.counter <= u64::from(u32::MAX),
+            "RFC 8439 32비트 블록 카운터 소진으로 키스트림 재사용 발생"
+        );
+        let block = chacha20_block(self.key.expose(), self.counter as u32, &self.nonce);
+        self.counter += 1;
         block
     }
 
     pub fn apply_keystream(&mut self, data: &mut [u8]) {
+        let blocks = data.len().div_ceil(64) as u64;
+        assert!(
+            blocks <= (1u64 << 32) - self.counter,
+            "RFC 8439 32비트 블록 카운터 소진으로 키스트림 재사용 발생"
+        );
+
         let mut offset = 0;
         while offset < data.len() {
             let mut keystream = self.keystream_block();
@@ -128,7 +145,12 @@ impl ChaCha20 {
         }
     }
 
+    #[must_use]
     pub fn generate_poly1305_key(&mut self) -> [u8; 32] {
+        assert!(
+            self.counter == 0,
+            "RFC 8439 Poly1305 키 생성은 블록 카운터 0 에서만 허용"
+        );
         let mut block = chacha20_block(self.key.expose(), 0, &self.nonce);
         let mut poly_key = [0u8; 32];
         poly_key.copy_from_slice(&block[..32]);
@@ -159,7 +181,8 @@ mod tests {
         let mut storage: MaybeUninit<ChaCha20> = MaybeUninit::uninit();
 
         unsafe {
-            storage.write(ChaCha20::new_with_counter(&key, &nonce, 42));
+            storage.write(ChaCha20::default());
+            (*storage.as_mut_ptr()).init_with_counter(&key, &nonce, 42);
             let key_ptr = storage.assume_init_ref().key.expose().as_ptr();
             let nonce_ptr = storage.assume_init_ref().nonce.as_ptr();
             let ctr_ptr = &raw const (*storage.as_ptr()).counter;
@@ -181,6 +204,35 @@ mod tests {
             assert!(post_nonce.iter().all(|&b| b == 0), "ChaCha20 nonce 미소거");
             assert_eq!(core::ptr::read(ctr_ptr), 0, "ChaCha20 counter 미소거");
         }
+    }
+
+    /// 카운터 소진 후 keystream_block 재호출은 키스트림 재사용이므로 어보트해야 함.
+    #[test]
+    #[should_panic(expected = "카운터 소진")]
+    fn test_counter_exhaustion_keystream_block() {
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let _ = chacha.keystream_block();
+        let _ = chacha.keystream_block();
+    }
+
+    /// 잔여 카운터 용량을 초과하는 apply_keystream 은 데이터 처리 전에 어보트해야 함.
+    #[test]
+    #[should_panic(expected = "카운터 소진")]
+    fn test_counter_exhaustion_apply_keystream() {
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], u32::MAX);
+        let mut data = [0u8; 128];
+        chacha.apply_keystream(&mut data);
+    }
+
+    /// 카운터가 0 이 아닌 상태에서 Poly1305 키 생성은 소진 추적 우회이므로 거부되어야 함.
+    #[test]
+    #[should_panic(expected = "블록 카운터 0")]
+    fn test_poly1305_keygen_requires_counter_zero() {
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&[0u8; 32], &[0u8; 12], 1);
+        let _ = chacha.generate_poly1305_key();
     }
 
     #[test]
@@ -233,7 +285,8 @@ mod tests {
             0x87, 0x4d,
         ];
 
-        let mut chacha = ChaCha20::new_with_counter(&key, &nonce, 1);
+        let mut chacha = ChaCha20::default();
+        chacha.init_with_counter(&key, &nonce, 1);
         let mut output = [0u8; 114];
         output.copy_from_slice(plaintext);
         chacha.apply_keystream(&mut output);

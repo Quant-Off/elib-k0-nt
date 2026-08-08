@@ -1,6 +1,7 @@
 use crate::params::{N, Q};
 use crate::poly::{Poly, PolyVec};
 use sha3::{SHAKE128, SHAKE256, XOF};
+use zeroize::Zeroize;
 
 pub fn rej_uniform(r: &mut [i16], ctr_start: usize, buf: &[u8]) -> usize {
     let mut ctr = ctr_start;
@@ -69,27 +70,13 @@ pub fn sample_ntt(seed: &[u8; 32], i: u8, j: u8) -> Poly {
     let mut xof = SHAKE128::new();
     xof.update(seed);
     xof.update(&[i, j]);
-    let mut buf = [0u8; 504];
-    xof.finalize_into(&mut buf);
+    let mut reader = xof.finalize_xof_reader();
 
-    let mut ctr = rej_uniform(&mut r.coeffs, 0, &buf);
-
-    if ctr < N {
-        let mut xof2 = SHAKE128::new();
-        xof2.update(seed);
-        xof2.update(&[i, j]);
-        let mut buf2 = [0u8; 672];
-        xof2.finalize_into(&mut buf2);
-        ctr = rej_uniform(&mut r.coeffs, ctr, &buf2[504..]);
-    }
-
-    if ctr < N {
-        let mut xof3 = SHAKE128::new();
-        xof3.update(seed);
-        xof3.update(&[i, j]);
-        let mut buf3 = [0u8; 840];
-        xof3.finalize_into(&mut buf3);
-        rej_uniform(&mut r.coeffs, ctr, &buf3[672..]);
+    let mut ctr = 0;
+    let mut block = [0u8; 168];
+    while ctr < N {
+        reader.squeeze_block(&mut block);
+        ctr = rej_uniform(&mut r.coeffs, ctr, &block);
     }
 
     r
@@ -106,6 +93,7 @@ pub fn sample_poly_cbd(seed: &[u8; 32], nonce: u8, eta: usize) -> Poly {
     prf.finalize_into(&mut buf[..buflen]);
 
     poly_cbd(&mut r, &buf[..buflen], eta);
+    buf.zeroize();
     r
 }
 
@@ -113,9 +101,9 @@ pub fn gen_matrix<const K: usize>(seed: &[u8; 32], transposed: bool) -> [[Poly; 
     core::array::from_fn(|i| {
         core::array::from_fn(|j| {
             if transposed {
-                sample_ntt(seed, j as u8, i as u8)
-            } else {
                 sample_ntt(seed, i as u8, j as u8)
+            } else {
+                sample_ntt(seed, j as u8, i as u8)
             }
         })
     })

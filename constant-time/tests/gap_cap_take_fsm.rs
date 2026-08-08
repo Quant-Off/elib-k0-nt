@@ -25,7 +25,7 @@
 #![allow(dead_code)]
 #![allow(clippy::all)]
 
-use constant_time::CtEqOps;
+use constant_time::traits::CtEqOps;
 
 #[cfg(test)]
 mod tests {
@@ -155,9 +155,9 @@ mod tests {
         let differ_msb = cap_sim(0x5EADBEEFCAFEBABE); // 1 bit MSB 차이
 
         // Wave 0 sanity — CtEqOps::eq 가 컴파일 시점 결합 가능한지 import 잠금
-        let _e1 = CtEqOps::eq(&stored.token, &same.token);
-        let _e2 = CtEqOps::eq(&stored.token, &differ_lsb.token);
-        let _e3 = CtEqOps::eq(&stored.token, &differ_msb.token);
+        let _e1 = CtEqOps::ct_eq(&stored.token, &same.token);
+        let _e2 = CtEqOps::ct_eq(&stored.token, &differ_lsb.token);
+        let _e3 = CtEqOps::ct_eq(&stored.token, &differ_msb.token);
 
         todo!("Plan 06-02 GREEN fill-in — CtEqOps::eq token bit-position independent timing 회귀")
     }

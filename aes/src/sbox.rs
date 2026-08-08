@@ -1,22 +1,16 @@
-//! AES S-box / inverse S-box
+//! AES S-box / inverse S-box 연산을 수행하는 모듈입니다.
 //!
-//! 과거 구현에서 종전 구현은 256회 constant-time 스캔 방식이었으나, AES-NI 미지원 환경 (TCG 등)
-//! 에서는 라운드 1회당 수만 명령어가 발생해 처리량이 급격히 떨어집니다.
-//! Boyar–Peralta 최소 게이트 회로 (논리 게이트 ~115 개)로 교체됐습니다. 모든 연산이
-//! AND/XOR/NOT 비트 연산이라 비밀 의존 분기·메모리 접근이 없으며 본질적으로 상수-시간입니다.
+//! 모든 연산이 AND/XOR/NOT 비트 연산이라 비밀 의존 분기 및 메모리 접근이 없으며
+//! 본질적으로 상수-시간입니다.
 //!
-//! 16바이트 블록은 비트슬라이스 표현 [u32; 8]로 변환해 1회의 BP 회로로 16바이트
-//! SubBytes를 일괄 처리합니다. 단일 바이트 sub_byte / inv_sub_byte 는 키 스케쥴
-//! (sub_word) 에서 호출되며 동일 회로를 1비트만 사용하는 형태로 호출한다.
-//!
-//! 회로 출처: Boyar & Peralta, "A New Combinational Logic Minimization Technique
-//! with Applications to Cryptology" (2010). BearSSL `aes_ct.c` 의 동일 회로 기반
-//! TODO: Dosctring 수정
+//! 16바이트 블록은 비트슬라이스 표현 \[u32; 8\]로 변환해 1회의 BP 회로로 16바이트
+//! SubBytes를 일괄 처리합니다. 단일 바이트 sub_byte / inv_sub_byte는 키 스케쥴
+//! (sub_word)에서 호출되며 동일 회로를 1비트만 사용하는 형태로 호출합니다.
 
 #![allow(clippy::many_single_char_names, clippy::similar_names)]
 
-// 16바이트 블록을 [u32; 8]비트슬라이스 평면으로 변환
-// q[k]의 i번째 비트 = bytes[i]의 k번째 비트
+use zeroize::Zeroize;
+
 #[inline]
 fn bitslice_block(bytes: &[u8; 16]) -> [u32; 8] {
     let mut q = [0u32; 8];
@@ -193,9 +187,6 @@ fn bitsliced_sbox(q: &mut [u32; 8]) {
     q[0] = s7;
 }
 
-// 역 S-box: 입력에 AES affine 의 역 (= 인접 비트 회전 + 상수 0x05) 을 적용하고
-// 정방향 S-box 를 통과시킨 뒤 같은 affine 역변환을 한 번 더 적용
-// (S-box(x) = Affine(Inv(x)) 이므로 InvSBox(y) = Inv(Affine⁻¹(y)) = Affine⁻¹(SBox(Affine⁻¹(y))).)
 fn bitsliced_inv_sbox(q: &mut [u32; 8]) {
     inv_affine(q);
     bitsliced_sbox(q);
@@ -222,22 +213,24 @@ fn inv_affine(q: &mut [u32; 8]) {
     q[0] = q2 ^ q5 ^ q7;
 }
 
-/// 16 바이트 블록 SubBytes 를 비트슬라이스 BP 회로로 일괄 적용합니다.
+/// 16바이트 블록 SubBytes를 비트슬라이스 BP 회로로 일괄 적용하는 함수입니다.
 pub fn sub_bytes_block(bytes: &mut [u8; 16]) {
     let mut q = bitslice_block(bytes);
     bitsliced_sbox(&mut q);
     *bytes = unbitslice_block(&q);
+    q.zeroize();
 }
 
-/// 16 바이트 블록 InvSubBytes 를 비트슬라이스 BP 회로로 일괄 적용합니다.
+/// 16바이트 블록 InvSubBytes를 비트슬라이스 BP 회로로 일괄 적용하는 함수입니다.
 pub fn inv_sub_bytes_block(bytes: &mut [u8; 16]) {
     let mut q = bitslice_block(bytes);
     bitsliced_inv_sbox(&mut q);
     *bytes = unbitslice_block(&q);
+    q.zeroize();
 }
 
-/// 단일 바이트 S-box. 키 스케줄 (sub_word) 에서 호출됩니다.
-/// 동일 BP 회로를 비트 1 개만 사용하는 형태로 적용 (회로 자체가 데이터 비종속)
+/// 키 스케줄(sub_word)에서 호출되는 단일 바이트 S-box 함수입니다.
+/// 동일 BP 회로를 비트 1개만 사용하는 형태로 적용(회로 자체가 데이터 비종속)됩니다.
 #[inline]
 #[must_use]
 pub fn sub_byte(x: u8) -> u8 {
@@ -250,10 +243,12 @@ pub fn sub_byte(x: u8) -> u8 {
     for (k, plane) in q.iter().enumerate() {
         out |= ((*plane & 1) as u8) << k;
     }
+    q.zeroize();
     out
 }
 
-/// 단일 바이트 역 S-box. 테스트와 향후 디코딩 경로의 셀별 호출용
+// 단일 바이트 역 S-box
+// 테스트와 향후 디코딩 경로의 셀별 호출용
 #[inline]
 #[must_use]
 #[cfg(test)]

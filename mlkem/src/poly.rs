@@ -142,7 +142,7 @@ impl<const K: usize> PolyVec<K> {
 }
 
 pub fn compress(a: u16, d: usize) -> u16 {
-    let t = (((a as u32) << d) + (Q as u32 / 2)) / (Q as u32);
+    let t = (((a as u64) << d) + 1664).wrapping_mul(330_282_857) >> 40;
     (t & ((1 << d) - 1)) as u16
 }
 

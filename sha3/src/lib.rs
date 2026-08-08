@@ -179,3 +179,22 @@ impl XOF for SHAKE256 {
         self.0.finalize_xof(out);
     }
 }
+
+// SHAKE128 증분 XOF 리더 (rate = 168 바이트 = MAX_RATE_BYTES)
+// 무한 거부 샘플링(FIPS 203 SampleNTT)에서 필요한 만큼 블록 단위로 스퀴즈
+pub struct Shake128Reader(KeccakState);
+
+impl SHAKE128 {
+    #[inline]
+    #[must_use]
+    pub fn finalize_xof_reader(self) -> Shake128Reader {
+        Shake128Reader(self.0.into_xof_reader())
+    }
+}
+
+impl Shake128Reader {
+    #[inline]
+    pub fn squeeze_block(&mut self, out: &mut [u8; MAX_RATE_BYTES]) {
+        self.0.squeeze_block(out);
+    }
+}

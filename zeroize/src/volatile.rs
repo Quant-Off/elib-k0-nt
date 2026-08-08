@@ -11,9 +11,6 @@
 //! # Security Note
 //! 모든 함수는 컴파일러 배리어와 메모리 배리어를 포함하여
 //! 쓰기 연산이 실제로 수행되고 캐시에 반영되도록 보장합니다.
-//!
-//! # Authors
-//! Q. T. Felix
 
 use crate::barrier::{atomic_compiler_fence, compiler_barrier, memory_barrier};
 use core::ptr;

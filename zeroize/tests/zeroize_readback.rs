@@ -1,5 +1,5 @@
 use core::mem::MaybeUninit;
-use zeroize::{Secret, Zeroize, zeroize_flat};
+use zeroize::{Secret, Zeroable, Zeroize, zeroize_flat};
 
 #[cfg_attr(miri, ignore)]
 #[test]
@@ -8,7 +8,7 @@ fn secret_array_zeroized_on_drop() {
     unsafe {
         storage.write(Secret::new([0xA5u8; 32]));
         let ptr = storage.assume_init_ref().expose().as_ptr();
-        let byte_len = core::mem::size_of::<[u8; 32]>();
+        let byte_len = size_of::<[u8; 32]>();
 
         let pre = core::slice::from_raw_parts(ptr, byte_len);
         assert!(
@@ -48,6 +48,31 @@ fn secret_into_inner_extracts_value() {
     );
 }
 
+// init_with 는 기존 내용을 먼저 소거한 뒤 클로저가 제자리에 기록한다.
+// 빈 클로저로 소거-선행 계약을, 기록 클로저로 제자리 초기화 계약을 검증한다.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn secret_init_with_wipes_then_writes_in_place() {
+    let mut s = Secret::new([0xEEu8; 32]);
+    let addr = s.expose().as_ptr();
+
+    s.init_with(|_| {});
+    assert!(
+        s.expose().iter().all(|&b| b == 0),
+        "init_with 가 기존 내용을 소거하지 않음"
+    );
+
+    s.init_with(|v| v.copy_from_slice(&[0x42u8; 32]));
+    assert!(
+        s.expose().iter().all(|&b| b == 0x42),
+        "init_with 가 새 값을 기록하지 않음"
+    );
+    assert!(
+        core::ptr::eq(addr, s.expose().as_ptr()),
+        "init_with 후 내부 데이터 주소가 이동함 — 제자리 계약 위반"
+    );
+}
+
 #[cfg_attr(miri, ignore)]
 #[test]
 fn zeroize_flat_wipes_bytes() {
@@ -58,6 +83,8 @@ fn zeroize_flat_wipes_bytes() {
         c: u32,
     }
 
+    unsafe impl Zeroable for Blob {}
+
     let mut storage: MaybeUninit<Blob> = MaybeUninit::uninit();
     unsafe {
         storage.write(Blob {
@@ -66,7 +93,7 @@ fn zeroize_flat_wipes_bytes() {
             c: 0xCAFE_BABE,
         });
         let ptr = storage.as_ptr() as *const u8;
-        let byte_len = core::mem::size_of::<Blob>();
+        let byte_len = size_of::<Blob>();
 
         let pre = core::slice::from_raw_parts(ptr, byte_len);
         assert!(

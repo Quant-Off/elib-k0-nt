@@ -8,3 +8,7 @@ license.workspace = true
 [dependencies]
 constant-time.workspace = true
 zeroize.workspace = true
+
+[[test]]
+name = "baremetal"
+harness = false

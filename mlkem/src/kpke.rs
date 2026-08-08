@@ -22,7 +22,7 @@ pub fn keypair<const K: usize>(ek: &mut [u8], dk: &mut [u8], d: &[u8; 32], eta1:
     }
 
     let rho: [u8; 32] = hash_out[..32].try_into().unwrap();
-    let sigma: [u8; 32] = hash_out[32..64].try_into().unwrap();
+    let mut sigma: [u8; 32] = hash_out[32..64].try_into().unwrap();
 
     let a_hat = gen_matrix::<K>(&rho, false);
 
@@ -48,6 +48,7 @@ pub fn keypair<const K: usize>(ek: &mut [u8], dk: &mut [u8], d: &[u8; 32], eta1:
 
     polyvec_tobytes(&mut dk[..polyvec_bytes], &s);
 
+    sigma.zeroize();
     hash_out.zeroize();
 }
 
